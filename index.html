@@ -1808,6 +1808,7 @@ let state = {
   retirementLifeExpectancy: 90,
   retirementTaxRate: 30,
   retirementScenario: "baseline",
+  paidExpenses: {},
 };
 
 let charts = {};
@@ -1869,7 +1870,7 @@ function getEffective(year, month) {
 }
 
 function getProjectionData() {
-  const ytr = state.retirementAge - state.currentAge;
+  const ytr = Math.max(0, state.retirementAge - state.currentAge);
   const data = [];
   let appAcc = 0, prevAppAcc = 0;
   const assetAcc = state.externalAssets.map(a=>a.balance);
@@ -1877,10 +1878,16 @@ function getProjectionData() {
 
   for (let y=0; y<=ytr; y++) {
     const year = CURRENT_YEAR+y;
-    const v = getEffective(year,0);
-    const ms = v.savings;
-    const rApp = state.growthRate/100/12;
+    const startMonth = y===0 ? CURRENT_MONTH : 0;
     const monthsThisYear = y===0 ? (12-CURRENT_MONTH) : 12;
+
+    // Average savings across all months in this year to account for monthly overrides
+    let totalSavings = 0;
+    for (let m=startMonth; m<12; m++) {
+      totalSavings += getEffective(year, m).savings;
+    }
+    const ms = monthsThisYear > 0 ? totalSavings / monthsThisYear : 0;
+    const rApp = state.growthRate/100/12;
 
     // App savings (uses global growth rate)
     prevAppAcc = appAcc;
@@ -1988,6 +1995,7 @@ function getDefaultState() {
     retirementLifeExpectancy: 90,
     retirementTaxRate: 30,
     retirementScenario: "baseline",
+    paidExpenses: {},
   };
 }
 
@@ -2302,7 +2310,7 @@ function renderTicker() {
   const surplusRate = ti > 0 ? ((surplus/ti)*100).toFixed(1) : 0;
   const extBal = state.externalAssets.reduce((s,a)=>s+a.balance,0);
   const extContrib = state.externalAssets.reduce((s,a)=>s+a.monthlyContribution,0);
-  const ytr = state.retirementAge - state.currentAge;
+  const ytr = Math.max(0, state.retirementAge - state.currentAge);
   
   const items = [
     { sym:"INCOME", val:fmtCompact(ti), chg:"+"+savRate+"%", up:true, label:"SAV RATE" },
@@ -2402,7 +2410,7 @@ function renderDashboard() {
   const ti = sum(state.baseIncome,"amount");
   const te = sum(state.baseExpenses,"amount");
   const savRate = ti>0?Math.round((state.baseSavings/ti)*100):0;
-  const ytr = state.retirementAge - state.currentAge;
+  const ytr = Math.max(0, state.retirementAge - state.currentAge);
 
   // ─── 12-MONTH CASH FLOW DATA ──────────────────────────────────────
   const m12 = [];
@@ -3127,7 +3135,7 @@ window.addYearlyItem = function(field) {
 function renderPortfolio() {
   const teb = sum(state.externalAssets,"balance");
   const tec = sum(state.externalAssets,"monthlyContribution");
-  const ytr = state.retirementAge - state.currentAge;
+  const ytr = Math.max(0, state.retirementAge - state.currentAge);
   const inflRate = state.inflationRate;
   const inflFactor = Math.pow(1 + inflRate/100, ytr);
   const projExt = state.externalAssets.reduce((s,a)=>s+futureValue(a.balance,a.monthlyContribution,(a.growthRate??state.growthRate),ytr),0);
@@ -3326,7 +3334,7 @@ const RET_SCENARIOS = { lean:0.75, baseline:1.0, comfortable:1.3 };
 function getRetirementNumbers() {
   const scenario = state.retirementScenario || "baseline";
   const mult = RET_SCENARIOS[scenario];
-  const ytr = state.retirementAge - state.currentAge;
+  const ytr = Math.max(0, state.retirementAge - state.currentAge);
 
   // Everything in TODAY'S money — expenses are entered in today's currency,
   // and we compare against the REAL (inflation-adjusted) nest egg so it's apples-to-apples.
@@ -3634,7 +3642,7 @@ function buildFinancialContext() {
   const savRate = ti>0 ? ((state.baseSavings/ti)*100).toFixed(1) : 0;
   const proj = getProjectionData();
   const nestEgg = proj.length ? proj[proj.length-1].total : 0;
-  const ytr = state.retirementAge - state.currentAge;
+  const ytr = Math.max(0, state.retirementAge - state.currentAge);
   const extBal = state.externalAssets.reduce((s,a)=>s+a.balance,0);
 
   // ── 12-month rolling cash flow ──
