@@ -1342,6 +1342,37 @@ body.light-mode .ticker-bar { background:#0a0a1a; }
   #ai-panel-backdrop.show { pointer-events: all; }
   #ai-fab { bottom: 20px; right: 20px; width: 48px; height: 48px; font-size: 18px; }
 }
+/* ── AI Panel: Message timestamps ── */
+.aip-msg-time { font-size:9px; color:var(--text-muted); margin-top:4px; font-family:'JetBrains Mono',monospace; opacity:.6; }
+.ai-msg.user .aip-msg-time { text-align:right; }
+
+/* ── AI Panel: Fade-in for messages ── */
+.aip-messages .ai-msg { animation:aipMsgIn .3s ease; }
+@keyframes aipMsgIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+
+/* ── AI Panel: Error bubble styling ── */
+.ai-bubble.aip-error { border-left:3px solid var(--red); background:#ef444415; }
+
+/* ── AI Panel: Minimised pill ── */
+#aip-pill {
+  display:none; position:fixed; bottom:28px; right:28px; z-index:1000;
+  background:var(--bg-card); border:1px solid var(--border); border-radius:24px;
+  padding:8px 16px 8px 12px; cursor:pointer;
+  box-shadow:0 4px 20px rgba(0,0,0,0.3);
+  font-size:12px; color:var(--text-secondary);
+  align-items:center; gap:8px;
+  transition:all .2s;
+}
+#aip-pill:hover { border-color:var(--green); color:var(--green); }
+#aip-pill .pill-icon { font-size:14px; }
+#aip-pill .pill-badge {
+  background:var(--amber); color:#000; font-size:9px; font-weight:700;
+  min-width:16px; height:16px; border-radius:8px;
+  display:flex; align-items:center; justify-content:center; padding:0 4px;
+}
+@media(max-width:768px) {
+  #aip-pill { bottom:calc(72px + env(safe-area-inset-bottom)); right:16px; }
+}
 /* ── END Floating AI Chat Panel ──────────────────────────────────────── */
 </style>
 </head>
@@ -1461,6 +1492,12 @@ body.light-mode .ticker-bar { background:#0a0a1a; }
 <!-- ═══ FLOATING AI CHAT ═══ -->
 <div id="ai-panel-backdrop" onclick="closeAIPanel()"></div>
 
+<!-- Minimised AI Pill -->
+<div id="aip-pill" onclick="openAIPanel()">
+  <span class="pill-icon">✦</span>
+  <span id="aip-pill-text">AI Advisor</span>
+</div>
+
 <!-- Floating Action Button -->
 <button id="ai-fab" onclick="toggleAIPanel()" title="AI Financial Advisor" aria-label="Open AI Advisor">
   ✦
@@ -1545,8 +1582,9 @@ let ignoreFirebaseUntil = 0; // timestamp ms — ignore Firebase updates until t
 let auth = null;
 let currentUser = null;
 let googleProvider = null;
-let aipOpen = false;
+let aipState_panel = "closed"; // "closed" | "open" | "minimised"
 let aipMsgCount = 0;
+let aipUserScrolledUp = false;
 try {
   if (typeof firebase !== "undefined" && firebase.initializeApp) {
     const fbApp = firebase.initializeApp(firebaseConfig);
@@ -1744,7 +1782,7 @@ function showScreen(screen) {
   const fab = document.getElementById("ai-fab");
   if (fab) fab.style.display = screen==="app" ? "flex" : "none";
   // Close the panel if user is logged out (guard: function may not be defined yet during early init)
-  if (screen !== "app" && typeof closeAIPanel === "function") closeAIPanel();
+  if (screen !== "app" && typeof closeAIPanel === "function") { aipState_panel = "closed"; closeAIPanel(); }
 }
 
 function onUserAuthenticated(user) {
@@ -2421,7 +2459,8 @@ function renderDashboard() {
     const disposable = v.income - v.expenses;
     const savings = v.savings;
     const discretionary = disposable - savings;
-    m12.push({ label:`${MONTH_NAMES[month]} '${String(year).slice(2)}`, fullLabel:`${MONTH_NAMES[month]} ${year}`, income:v.income, expenses:v.expenses, disposable, savings, discretionary, isCurrent:i===0, incomeItems:v.incomeItems, expenseItems:v.expenseItems });
+    const monthKey = `${year}-${String(month+1).padStart(2,"0")}`;
+    m12.push({ key:monthKey, label:`${MONTH_NAMES[month]} '${String(year).slice(2)}`, fullLabel:`${MONTH_NAMES[month]} ${year}`, income:v.income, expenses:v.expenses, disposable, savings, discretionary, isCurrent:i===0, incomeItems:v.incomeItems, expenseItems:v.expenseItems });
   }
   const avgDisposable = m12.reduce((s,m)=>s+m.disposable,0)/12;
   const avgDiscretionary = m12.reduce((s,m)=>s+m.discretionary,0)/12;
@@ -2511,7 +2550,8 @@ function renderDashboard() {
           <span class="legend-dot" style="background:#f59e0b"></span> Fun Fund
         </div>
       </div>
-      <canvas id="chart-12m" height="150"></canvas>
+      <canvas id="chart-12m" height="150" style="cursor:pointer"></canvas>
+      <p style="font-size:11px;color:var(--text-muted);margin-top:8px;text-align:center">Click any data point to drill into that month's details</p>
     </div>
 
     <div class="chart-card">
@@ -2554,6 +2594,16 @@ function renderDashboard() {
       <p class="section-divider-sub">Long-term nest egg growth, projected freedom number, and portfolio breakdown</p>
     </div>
 
+    ${(()=>{
+      const retNums = getRetirementNumbers();
+      const hasRetExp = sum(state.retirementExpenses||[],"amount") > 0;
+      if (!hasRetExp) return `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:12px;cursor:pointer" onclick="switchTab('retirement')"><span style="font-size:24px">📝</span><div><div style="font-size:14px;font-weight:600;color:var(--text-primary)">Set up your retirement expenses</div><div style="font-size:12px;color:var(--text-muted)">Add your expected retirement spending to see if you're on track → Retirement Plan tab</div></div></div>`;
+      const verdictColors = {overfunded:"var(--green)",ontarget:"var(--amber)",underfunded:"var(--red)"};
+      const vc = verdictColors[retNums.verdictClass]||"var(--text-muted)";
+      const gapText = retNums.gap>=0 ? `Surplus of ${fmt(retNums.gap)}/mo` : `Shortfall of ${fmt(Math.abs(retNums.gap))}/mo`;
+      return `<div style="background:var(--bg-card);border:1px solid var(--border);border-left:4px solid ${vc};border-radius:var(--radius-lg);padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;cursor:pointer" onclick="switchTab('retirement')"><span style="font-size:28px">${retNums.verdictIcon}</span><div style="flex:1;min-width:180px"><div style="font-size:15px;font-weight:700;color:${vc}">${retNums.verdict}</div><div style="font-size:12px;color:var(--text-muted);margin-top:2px">${gapText} · ${retNums.coveragePct.toFixed(0)}% funded · ${fmt(retNums.sustainableAfterTax)}/mo after tax</div></div><span style="font-size:12px;color:var(--text-muted)">View details →</span></div>`;
+    })()}
+
     <div class="kpi-grid">
       ${kpiHTML("Nest Egg (Nominal)",fmt(nestEgg),`External assets + savings invested · ${state.growthRate}% growth · age ${state.retirementAge}`,"◈","#10b981")}
       ${kpiHTML("Nest Egg (Today's Money)",fmt(realNestEgg),`Adjusted for ${state.inflationRate}% inflation · ${realGrowth.toFixed(1)}% real return`,"◈","#06b6d4")}
@@ -2579,14 +2629,22 @@ function renderDashboard() {
             <span style="color:#06b6d4;font-weight:600">${fmt(real)}</span>
           </div>`;
         }).join("")}
-        <div class="nbt-row">
-          <span class="nbt-name">Monthly Savings (ETF)</span>
-          <span>—</span>
-          <span>${fmt(proj.length?getEffective(CURRENT_YEAR,0).savings:0)}</span>
-          <span>${state.growthRate}%</span>
-          <span>${fmt(proj.length?proj[proj.length-1].appSavings:0)}</span>
-          <span style="color:#06b6d4;font-weight:600">${fmt(Math.round((proj.length?proj[proj.length-1].appSavings:0)/Math.pow(1+state.inflationRate/100,ytr)))}</span>
-        </div>
+        ${(()=>{
+          const appNominal = proj.length?proj[proj.length-1].appSavings:0;
+          const appReal = Math.round(appNominal/Math.pow(1+state.inflationRate/100,ytr));
+          // Compute weighted average monthly savings across all projection years
+          let totalMonths=0, totalSav=0;
+          for(let y=0;y<=ytr;y++){const yr=CURRENT_YEAR+y;const sm=y===0?CURRENT_MONTH:0;for(let m=sm;m<12;m++){totalSav+=getEffective(yr,m).savings;totalMonths++;}}
+          const avgMoSav = totalMonths>0?totalSav/totalMonths:0;
+          return `<div class="nbt-row">
+            <span class="nbt-name">Monthly Savings → ETF</span>
+            <span>—</span>
+            <span title="Weighted avg across all ${totalMonths} months in projection">${fmt(avgMoSav)}<span style="font-size:9px;color:var(--text-muted)"> avg</span></span>
+            <span>${state.growthRate}%</span>
+            <span>${fmt(appNominal)}</span>
+            <span style="color:#06b6d4;font-weight:600">${fmt(appReal)}</span>
+          </div>`;
+        })()}
         <div class="nbt-row nbt-total">
           <span class="nbt-name">Total</span>
           <span></span><span></span><span></span>
@@ -2677,6 +2735,12 @@ function renderDashboard() {
         responsive:true,
         maintainAspectRatio: !isMobile(),
         interaction:{ mode:"index", intersect:false },
+        onClick:(evt, elements) => {
+          if (!elements.length) return;
+          const idx = elements[0].index;
+          const m = m12[idx];
+          if (m && m.key) { state.selectedMonth = m.key; switchTab("monthly"); }
+        },
         plugins:{
           legend:{ labels:{color:"#94a3b8",font:{family:"DM Sans"}} },
           tooltip:{
@@ -2688,7 +2752,7 @@ function renderDashboard() {
               afterBody:function(items) {
                 const idx = items[0].dataIndex;
                 const m = m12[idx];
-                return `──────────\nThis month — Income: ${fmt(m.income)}  |  Expenses: ${fmt(m.expenses)}`;
+                return `──────────\nThis month — Income: ${fmt(m.income)}  |  Expenses: ${fmt(m.expenses)}\nClick to view details →`;
               }
             }
           }
@@ -3415,16 +3479,19 @@ function renderRetirement() {
     </div>`).join("");
 
   // ── Bar chart for expense breakdown ──
+  const scenMult = RET_SCENARIOS[nums.scenario];
   const totalExp = sum(retExp, "amount");
+  const scaledTotalExp = totalExp * scenMult;
   const barItems = retExp.filter(e=>e.amount>0).map((e, i) => {
     const colors = ["var(--blue)","var(--green)","var(--violet)","var(--amber)","var(--pink)","var(--red)"];
+    const scaledAmt = e.amount * scenMult;
     const pct = totalExp > 0 ? (e.amount / totalExp * 100).toFixed(1) : 0;
     return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:13px">
       <span style="width:18px;text-align:center">${e.icon||"💸"}</span>
       <div style="flex:1">
         <div style="display:flex;justify-content:space-between;margin-bottom:3px">
           <span style="color:var(--text-secondary)">${esc(e.name)}</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-muted)">${fmt(e.amount)} <span style="color:${colors[i%colors.length]}">${pct}%</span></span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-muted)">${fmt(scaledAmt)} <span style="color:${colors[i%colors.length]}">${pct}%</span></span>
         </div>
         <div style="height:6px;background:var(--bg-deep);border-radius:3px;overflow:hidden">
           <div style="width:${pct}%;height:100%;background:${colors[i%colors.length]};border-radius:3px"></div>
@@ -3511,7 +3578,7 @@ function renderRetirement() {
             </div>
           </div>
         </div>
-        ${totalExp > 0 ? `<div class="ret-exp-card"><h3>Expense Breakdown</h3><div style="margin-top:8px">${barItems||'<p style="color:var(--text-muted);font-size:13px">Add expenses to see breakdown</p>'}</div><div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:13px;font-weight:600;color:var(--text-secondary)">Total Monthly</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:var(--text-primary)">${fmt(totalExp * RET_SCENARIOS[nums.scenario])}</span></div></div>` : ""}
+        ${totalExp > 0 ? `<div class="ret-exp-card"><h3>Expense Breakdown <span style="font-size:12px;font-weight:400;color:var(--text-muted)">(${Math.round(scenMult*100)}% of baseline)</span></h3><div style="margin-top:8px">${barItems||'<p style="color:var(--text-muted);font-size:13px">Add expenses to see breakdown</p>'}</div><div style="border-top:1px solid var(--border);margin-top:12px;padding-top:12px;display:flex;justify-content:space-between;align-items:center"><span style="font-size:13px;font-weight:600;color:var(--text-secondary)">Total Monthly</span><span style="font-family:'JetBrains Mono',monospace;font-weight:700;font-size:16px;color:var(--text-primary)">${fmt(scaledTotalExp)}</span></div></div>` : ""}
       </div>
     </div>
 
@@ -3928,7 +3995,7 @@ function renderAIMessages() {
 
 async function sendAIMessage(text) {
   if (!text.trim() || aiState.isTyping) return;
-  aiState.messages.push({ role:"user", content:text.trim() });
+  aiState.messages.push({ role:"user", content:text.trim(), ts:Date.now() });
   aiState.isTyping = true;
   renderAIMessages();
 
@@ -3938,9 +4005,9 @@ async function sendAIMessage(text) {
 
   try {
     const reply = await callAIProvider(aiState.messages.filter(m=>m.role==="user"||m.role==="bot"||m.role==="assistant"));
-    aiState.messages.push({ role:"bot", content:reply });
+    aiState.messages.push({ role:"bot", content:reply, ts:Date.now() });
   } catch(err) {
-    aiState.messages.push({ role:"bot", content:`⚠️ **Error:** ${err.message}\n\nPlease check your API key and try again.` });
+    aiState.messages.push({ role:"bot", content:`⚠️ **Error:** ${err.message}\n\nPlease check your API key and try again.`, ts:Date.now(), isError:true });
   }
   aiState.isTyping = false;
   renderAIMessages();
@@ -4182,34 +4249,68 @@ const AIP_CHIPS = [
 
 
 function toggleAIPanel() {
-  aipOpen ? closeAIPanel() : openAIPanel();
+  if (aipState_panel === "open") closeAIPanel();
+  else openAIPanel();
 }
 
-function openAIPanel() {
-  aipOpen = true;
+function syncPanelVisibility() {
   const panel = document.getElementById("ai-slide-panel");
   const fab   = document.getElementById("ai-fab");
   const back  = document.getElementById("ai-panel-backdrop");
-  panel.classList.add("open");
-  fab.classList.add("panel-open");
-  if (back) { back.style.display = "block"; setTimeout(()=>back.classList.add("show"),10); }
-  // clear unread badge
+  const pill  = document.getElementById("aip-pill");
+
+  if (aipState_panel === "open") {
+    if (panel) panel.classList.add("open");
+    if (fab)   { fab.classList.add("panel-open"); fab.style.display = "flex"; }
+    if (pill)  pill.style.display = "none";
+    if (back)  { back.style.display = "block"; setTimeout(()=>back.classList.add("show"),10); }
+  } else if (aipState_panel === "minimised") {
+    if (panel) panel.classList.remove("open");
+    if (fab)   { fab.classList.remove("panel-open"); fab.style.display = "none"; }
+    if (pill)  pill.style.display = "flex";
+    if (back)  { back.classList.remove("show"); setTimeout(()=>back.style.display="none",310); }
+  } else { // closed
+    if (panel) panel.classList.remove("open");
+    if (fab)   { fab.classList.remove("panel-open"); fab.style.display = "flex"; }
+    if (pill)  pill.style.display = "none";
+    if (back)  { back.classList.remove("show"); setTimeout(()=>back.style.display="none",310); }
+  }
+}
+
+function openAIPanel() {
+  aipState_panel = "open";
+  syncPanelVisibility();
   aipMsgCount = 0;
   const badge = document.getElementById("fab-badge");
   if (badge) badge.classList.remove("show");
   aipRenderPanel();
   aipSyncContextCheckbox();
+  // Set up smart scroll listener
+  const msgs = document.getElementById("aip-messages");
+  if (msgs && !msgs._scrollListenerAttached) {
+    msgs.addEventListener("scroll", () => {
+      const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 50;
+      aipUserScrolledUp = !atBottom;
+    });
+    msgs._scrollListenerAttached = true;
+  }
+  aipUserScrolledUp = false;
   setTimeout(()=>{ const ta=document.getElementById("aip-textarea"); if(ta) ta.focus(); },310);
 }
 
 function closeAIPanel() {
-  aipOpen = false;
-  const panel = document.getElementById("ai-slide-panel");
-  const fab   = document.getElementById("ai-fab");
-  const back  = document.getElementById("ai-panel-backdrop");
-  if (panel) panel.classList.remove("open");
-  if (fab) fab.classList.remove("panel-open");
-  if (back) { back.classList.remove("show"); setTimeout(()=>back.style.display="none",310); }
+  // If there's an active conversation, minimise instead of closing
+  if (aiState.messages.length > 0 && aipState_panel === "open") {
+    aipState_panel = "minimised";
+    const pillText = document.getElementById("aip-pill-text");
+    if (pillText) {
+      const lastBot = [...aiState.messages].reverse().find(m=>m.role==="bot");
+      pillText.textContent = lastBot ? lastBot.content.slice(0,30)+"…" : "AI Advisor";
+    }
+  } else {
+    aipState_panel = "closed";
+  }
+  syncPanelVisibility();
 }
 
 function aipRenderPanel() {
@@ -4303,6 +4404,12 @@ function aipChip(text) {
   aipSendMessage(text);
 }
 
+function fmtTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+}
+
 function aipRenderMessages() {
   const el = document.getElementById("aip-messages");
   if (!el) return;
@@ -4315,7 +4422,6 @@ function aipRenderMessages() {
     </div>`;
     return;
   }
-  // Reuse the existing message renderer by sharing the same aiState.messages array
   el.innerHTML = aiState.messages.map(m => {
     const isBot = m.role === "bot" || m.role === "assistant";
     const prov  = AI_PROVIDERS[aiState.provider];
@@ -4325,22 +4431,23 @@ function aipRenderMessages() {
     const html = isBot
       ? markdownToHTML(m.content)
       : m.content.replace(/</g,"&lt;").replace(/>/g,"&gt;");
-    const bubble = `<div class="ai-bubble">${isBot ? html : `<p>${html}</p>`}</div>`;
-    return `<div class="ai-msg ${isBot?"bot":"user"}">${isBot ? avatar+bubble : bubble+avatar}</div>`;
+    const errorClass = m.isError ? " aip-error" : "";
+    const bubble = `<div class="ai-bubble${errorClass}">${isBot ? html : `<p>${html}</p>`}</div>`;
+    const timeStr = m.ts ? `<div class="aip-msg-time">${fmtTime(m.ts)}</div>` : "";
+    return `<div class="ai-msg ${isBot?"bot":"user"}">${isBot ? avatar+`<div>${bubble}${timeStr}</div>` : `<div>${bubble}${timeStr}</div>`+avatar}</div>`;
   }).join("") + (aiState.isTyping
     ? `<div class="ai-msg bot"><div class="ai-avatar bot">${AI_PROVIDERS[aiState.provider].icon}</div><div class="ai-bubble"><div class="ai-typing"><span></span><span></span><span></span></div></div></div>`
     : "");
-  el.scrollTop = el.scrollHeight;
-  // keep chips hidden once chat started
+  // Smart scroll: only auto-scroll if user hasn't scrolled up
+  if (!aipUserScrolledUp) el.scrollTop = el.scrollHeight;
   aipRenderChips();
 }
 
 async function aipSendMessage(text) {
   if (!text.trim() || aiState.isTyping) return;
-  aiState.messages.push({ role:"user", content:text.trim() });
+  aiState.messages.push({ role:"user", content:text.trim(), ts:Date.now() });
   aiState.isTyping = true;
   aipRenderMessages();
-  // Mirror to the dedicated AI tab if it's rendered
   if (typeof renderAIMessages === "function") renderAIMessages();
 
   const ta = document.getElementById("aip-textarea");
@@ -4348,15 +4455,15 @@ async function aipSendMessage(text) {
 
   try {
     const reply = await callAIProvider(aiState.messages.filter(m=>m.role==="user"||m.role==="bot"||m.role==="assistant"));
-    aiState.messages.push({ role:"bot", content:reply });
+    aiState.messages.push({ role:"bot", content:reply, ts:Date.now() });
     // Show unread badge if panel is closed
-    if (!aipOpen) {
+    if (aipState_panel !== "open") {
       aipMsgCount++;
       const badge = document.getElementById("fab-badge");
       if (badge) { badge.textContent = aipMsgCount; badge.classList.add("show"); }
     }
   } catch(err) {
-    aiState.messages.push({ role:"bot", content:`⚠️ **Error:** ${err.message}` });
+    aiState.messages.push({ role:"bot", content:`⚠️ **Error:** ${err.message}`, ts:Date.now(), isError:true });
   }
   aiState.isTyping = false;
   aipRenderMessages();
@@ -4395,7 +4502,7 @@ const _origRenderAIMessages = window.renderAIMessages;
 if (typeof _origRenderAIMessages === "function") {
   window.renderAIMessages = function() {
     _origRenderAIMessages();
-    if (aipOpen) aipRenderMessages();
+    if (aipState_panel === "open") aipRenderMessages();
   };
 }
 // ─── END FLOATING AI PANEL ───────────────────────────────────────────────────
