@@ -1483,6 +1483,7 @@ body.light-mode .ticker-bar { background:#0a0a1a; }
     <div class="view-panel" id="view-retirement"></div>
     <div class="view-panel" id="view-ai"></div>
     <div class="view-panel" id="view-settings"></div>
+    <div class="view-panel" id="view-guide"></div>
   </main>
 </div>
 
@@ -2391,6 +2392,7 @@ const tabDefs = [
   { id:"retirement", label:"Retirement Plan", icon:"🌅" },
   { id:"ai", label:"AI Advisor", icon:"✦" },
   { id:"settings", label:"Baseline & Config", icon:"⚙" },
+  { id:"guide", label:"Guide", icon:"📖" },
 ];
 function renderTabs() {
   document.getElementById("tab-nav").innerHTML = tabDefs.map(t=>`<button class="tab-btn ${t.id===state.activeTab?"active":""}" onclick="switchTab('${t.id}')"><span>${t.icon}</span><span>${t.label}</span></button>`).join("");
@@ -2406,6 +2408,7 @@ window.switchTab = function(id) {
   else if (id==="retirement") renderRetirement();
   else if (id==="ai") renderAIAdvisor();
   else if (id==="settings") renderSettings();
+  else if (id==="guide") renderGuide();
 };
 
 function kpiHTML(label,value,subtitle,icon,accent) {
@@ -3785,6 +3788,219 @@ function renderRetirement() {
   if (charts.runway) { charts.runway.destroy(); delete charts.runway; }
 }
 
+// ─── GUIDE ──────────────────────────────────────────────────────────
+function renderGuide() {
+  const el = document.getElementById("view-guide");
+  if (!el) return;
+  el.innerHTML = `
+    <div class="section-header"><h2>📖 User Guide</h2><p>Everything you need to know to plan your retirement with Future Forecast.</p></div>
+
+    <div style="display:flex;flex-direction:column;gap:20px">
+
+    <!-- Quick Start -->
+    <div class="settings-section">
+      <h3>Quick Start</h3>
+      <div style="color:var(--text-secondary);font-size:14px;line-height:1.8">
+        <p><strong>1. Set your baseline</strong> — Go to <a href="#" onclick="switchTab('settings');return false" style="color:var(--green)">Baseline &amp; Config</a> and enter your recurring monthly income and expenses. These are your defaults that apply to every future month automatically.</p>
+        <p style="margin-top:8px"><strong>2. Add your portfolio</strong> — Go to <a href="#" onclick="switchTab('portfolio');return false" style="color:var(--green)">Portfolio</a> and add your investment accounts (pensions, index funds, brokerage). Enter current balances, monthly contributions, and expected growth rates.</p>
+        <p style="margin-top:8px"><strong>3. Plan retirement expenses</strong> — Go to <a href="#" onclick="switchTab('retirement');return false" style="color:var(--green)">Retirement Plan</a> and enter what you expect to spend monthly in retirement (housing, food, healthcare, travel, etc.) in today's money.</p>
+        <p style="margin-top:8px"><strong>4. Review your dashboard</strong> — The <a href="#" onclick="switchTab('dashboard');return false" style="color:var(--green)">Dashboard</a> now shows your 12-month cash flow, nest egg projections, and whether you're on track for retirement.</p>
+      </div>
+    </div>
+
+    <!-- How the Data Flows -->
+    <div class="settings-section">
+      <h3>How Your Data Flows</h3>
+      <div style="color:var(--text-secondary);font-size:14px;line-height:1.8">
+        <p>The app uses a <strong>layered override system</strong>. Think of it as defaults that can be customised for specific months or years:</p>
+        <div style="background:var(--bg-deep);border-radius:8px;padding:16px;margin:12px 0;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.8;color:var(--text-secondary)">
+          <div><span style="color:var(--green)">1. Baseline</span> (Baseline &amp; Config tab) — your default income, expenses, and savings</div>
+          <div style="padding-left:20px"><span style="color:var(--text-muted)">↓ overridden by</span></div>
+          <div><span style="color:var(--amber)">2. Yearly Bases</span> (Yearly Forecast tab) — set different defaults for a specific year</div>
+          <div style="padding-left:20px"><span style="color:var(--text-muted)">↓ overridden by</span></div>
+          <div><span style="color:var(--violet)">3. Monthly Overrides</span> (Monthly Review tab) — customise a specific month</div>
+        </div>
+        <p><strong>Example:</strong> Your baseline salary is 98,000 kr/mo. In the Yearly Forecast for 2027 you set it to 80,000 kr (career change). But in March 2027 specifically you got a 72,000 kr bonus — so that one month has a monthly override. The app resolves the correct value for each month automatically.</p>
+      </div>
+    </div>
+
+    <!-- Tab-by-Tab Guide -->
+    <div class="settings-section">
+      <h3>Tab-by-Tab Reference</h3>
+      <div style="color:var(--text-secondary);font-size:14px;line-height:1.8">
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:8px 0">◉ Dashboard</summary>
+          <div style="padding:8px 0 8px 16px">
+            <p>Your financial command centre. Shows:</p>
+            <ul style="padding-left:18px;margin:8px 0">
+              <li><strong>12-Month Cash Flow</strong> — projected income, expenses, savings, and "Fun Fund" (what's left after savings) for the next 12 months</li>
+              <li><strong>Cumulative Chart</strong> — click any data point to jump to that month's detail in the Monthly Review tab</li>
+              <li><strong>Retirement Verdict</strong> — "Well Funded", "On Track", or "Underfunded" banner with a click-through to the Retirement Plan</li>
+              <li><strong>Nest Egg Projections</strong> — nominal value, inflation-adjusted value, Freedom Number (total portfolio needed), and years to retirement</li>
+              <li><strong>Year-by-Year Table</strong> — shows contributions, compound growth, and total nest egg for each year until retirement</li>
+            </ul>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:8px 0">☰ Monthly Review</summary>
+          <div style="padding:8px 0 8px 16px">
+            <p>View and customise individual months. Select a month pill at the top to see its income, expenses, and savings.</p>
+            <ul style="padding-left:18px;margin:8px 0">
+              <li><strong>Inherited values</strong> — months start with your baseline. Edit any field and it automatically creates an override for that month only</li>
+              <li><strong>"Reset to baseline"</strong> button removes a month's overrides, reverting to defaults</li>
+              <li><strong>Paid checkboxes</strong> — on the current month, tick expenses as paid to track progress</li>
+              <li><strong>Charts</strong> — 12-month forward view and cumulative rolling totals</li>
+            </ul>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:8px 0">▦ Yearly Forecast</summary>
+          <div style="padding:8px 0 8px 16px">
+            <p>Set yearly base values that override the baseline for an entire year.</p>
+            <ul style="padding-left:18px;margin:8px 0">
+              <li><strong>Cascade toggle</strong> — when enabled, this year's values apply to all future years too (until another year overrides them)</li>
+              <li><strong>Use case</strong> — career change, salary increase, moving to a cheaper area, etc.</li>
+              <li>Monthly overrides still take priority over yearly bases for specific months</li>
+            </ul>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:8px 0">◈ Portfolio</summary>
+          <div style="padding:8px 0 8px 16px">
+            <p>Track external investment accounts separately from your monthly savings.</p>
+            <ul style="padding-left:18px;margin:8px 0">
+              <li>Each account has its own <strong>balance</strong>, <strong>monthly contribution</strong>, and <strong>growth rate</strong></li>
+              <li><strong>Examples:</strong> workplace pension (ITP1), index fund (Vanguard), ISA, 401k, brokerage account, individual shares</li>
+              <li>Projections show each account's value at retirement in both nominal and today's money</li>
+              <li><strong>Monthly Savings → ETF</strong> (on Dashboard) is separate — it represents the flow of new money from your monthly savings budget, not existing portfolio balances</li>
+            </ul>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:8px 0">🌅 Retirement Plan</summary>
+          <div style="padding:8px 0 8px 16px">
+            <p>The core planning tool. Enter expected retirement expenses and see if your savings will sustain them.</p>
+            <ul style="padding-left:18px;margin:8px 0">
+              <li><strong>Expenses</strong> — enter monthly amounts in today's money (housing, food, healthcare, travel, etc.)</li>
+              <li><strong>Scenarios</strong> — Lean (75%), Baseline (100%), Comfortable (130%) let you stress-test different lifestyles</li>
+              <li><strong>All Parameters</strong> — current age, retirement age, growth rate, inflation, post-retirement growth, tax rate, and life expectancy are all here in one place</li>
+              <li><strong>Income Requirements</strong> — shows the chain: expenses → gross income needed → implied withdrawal rate → fund depletion age</li>
+              <li><strong>Sustainability Analysis</strong> — compares what your portfolio can sustain vs what you need, using the annuity formula (funds last until life expectancy)</li>
+              <li><strong>Longevity Runway</strong> — SVG chart showing portfolio balance declining over retirement years, with annual income bars on the right axis</li>
+            </ul>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:8px 0">✦ AI Advisor</summary>
+          <div style="padding:8px 0 8px 16px">
+            <p>Chat with an AI that has full context of your financial data.</p>
+            <ul style="padding-left:18px;margin:8px 0">
+              <li><strong>Providers:</strong> Claude, ChatGPT, or Gemini — bring your own API key</li>
+              <li><strong>"Share financial context" toggle</strong> — when on, the AI sees all your income, expenses, projections, and retirement numbers</li>
+              <li><strong>Quick chips</strong> — pre-built prompts like "Am I saving enough?" or "When can I retire?"</li>
+              <li><strong>Floating panel</strong> — access from any tab via the ✦ button. Expand for wider view, minimises to a pill when closed with active chat</li>
+            </ul>
+          </div>
+        </details>
+
+        <details style="margin-bottom:12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:8px 0">⚙ Baseline &amp; Config</summary>
+          <div style="padding:8px 0 8px 16px">
+            <p>Your recurring defaults and app configuration.</p>
+            <ul style="padding-left:18px;margin:8px 0">
+              <li><strong>Monthly Income / Expenses / Savings</strong> — these are the baseline values inherited by every month and year unless overridden</li>
+              <li><strong>Exchange Rates</strong> — all values are stored in SEK internally; the currency toggle converts for display</li>
+              <li><strong>Ticker Quote</strong> — your personal mantra scrolling across the top of the app</li>
+              <li><strong>Data Management</strong> — export/import backups, re-run setup, or reset all data</li>
+            </ul>
+          </div>
+        </details>
+
+      </div>
+    </div>
+
+    <!-- Key Concepts -->
+    <div class="settings-section">
+      <h3>Key Concepts</h3>
+      <div style="color:var(--text-secondary);font-size:14px;line-height:1.8">
+
+        <p style="margin-bottom:12px"><strong style="color:var(--green)">Nominal vs. Today's Money</strong><br>
+        "Nominal" means the raw future number without accounting for inflation. "Today's Money" (or "Real") adjusts for inflation so you can compare with what things cost today. If your nest egg is 5M kr nominal but 3.3M in today's money, that means 5M kr in 25 years buys what 3.3M buys today.</p>
+
+        <p style="margin-bottom:12px"><strong style="color:var(--amber)">Freedom Number</strong><br>
+        The total portfolio you need at retirement to fund your planned expenses. Calculated as your annual gross withdrawal need divided by the real withdrawal rate. Compare it to your "Nest Egg (Today's Money)" — if the nest egg exceeds the freedom number, you're funded.</p>
+
+        <p style="margin-bottom:12px"><strong style="color:var(--violet)">Withdrawal Rate</strong><br>
+        The percentage of your portfolio you withdraw annually. The classic "4% rule" suggests 4% is safe for a 30-year retirement. Your implied rate is calculated from your expenses — if it's above 4%, your portfolio may deplete faster than expected.</p>
+
+        <p style="margin-bottom:12px"><strong style="color:var(--blue)">Annuity vs. Perpetuity</strong><br>
+        The sustainability analysis uses an annuity formula — it calculates the maximum withdrawal that depletes your portfolio exactly at your life expectancy. This is more realistic than a perpetuity (money lasting forever) and means a 3.5% withdrawal rate can be sustainable even though it sounds close to 4%.</p>
+
+        <p style="margin-bottom:12px"><strong style="color:var(--red)">Post-Retirement Growth Rate</strong><br>
+        Enter the <strong>nominal</strong> rate (what you expect the market to return, e.g., 6%). The app subtracts your inflation rate automatically to get the real rate used in retirement calculations. So 6% nominal − 2% inflation = 4% real growth during retirement.</p>
+
+        <p style="margin-bottom:12px"><strong style="color:var(--text-primary)">Currency</strong><br>
+        All values are stored in SEK internally. The currency toggle in the header converts amounts for display using the exchange rates in Settings. When you edit a value while viewing in USD, the app converts it back to SEK for storage. Update exchange rates in Settings if they drift.</p>
+      </div>
+    </div>
+
+    <!-- Tips -->
+    <div class="settings-section">
+      <h3>Tips &amp; Best Practices</h3>
+      <div style="color:var(--text-secondary);font-size:14px;line-height:1.8">
+        <ul style="padding-left:18px">
+          <li><strong>Start with baseline, then override.</strong> Get your recurring values right first. Only create monthly overrides for months that genuinely differ (bonuses, holidays, large purchases).</li>
+          <li style="margin-top:8px"><strong>Use yearly forecast for life changes.</strong> New job, relocation, kids — set a yearly base with cascade to automatically update all future projections.</li>
+          <li style="margin-top:8px"><strong>Stress-test with scenarios.</strong> Switch between Lean/Baseline/Comfortable on the Retirement Plan tab to see how lifestyle changes affect your runway.</li>
+          <li style="margin-top:8px"><strong>Review the AI advisor.</strong> Ask it "What are my biggest financial risks?" or "When can I realistically retire?" — it sees all your data and can give personalised analysis.</li>
+          <li style="margin-top:8px"><strong>Export backups regularly.</strong> Use Settings → Export Backup to save a JSON file. You can re-import it on any device.</li>
+          <li style="margin-top:8px"><strong>The Fun Fund is your spending money.</strong> It's income minus expenses minus savings — what's genuinely left for discretionary spending each month.</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- FAQ -->
+    <div class="settings-section">
+      <h3>FAQ</h3>
+      <div style="color:var(--text-secondary);font-size:14px;line-height:1.8">
+
+        <details style="margin-bottom:10px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:6px 0">Why doesn't changing Monthly Savings Target in Settings affect anything?</summary>
+          <div style="padding:6px 0 6px 16px">If you've created monthly overrides or yearly bases with explicit savings values, those take priority. The baseline savings only applies to months with no override. Check the Monthly Review tab — if months show "has custom overrides", they're using their own savings value, not the baseline.</div>
+        </details>
+
+        <details style="margin-bottom:10px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:6px 0">What's the difference between Portfolio assets and Monthly Savings → ETF?</summary>
+          <div style="padding:6px 0 6px 16px">Portfolio assets are money you <strong>already have</strong> (existing balances in pension, index funds, etc.). Monthly Savings → ETF is money you <strong>will save</strong> in the future from your monthly budget. They're tracked separately to avoid double-counting.</div>
+        </details>
+
+        <details style="margin-bottom:10px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:6px 0">How is the retirement withdrawal rate calculated?</summary>
+          <div style="padding:6px 0 6px 16px">Your monthly expenses × scenario multiplier ÷ (1 − tax rate) = gross monthly needed. Multiply by 12 and divide by your real nest egg = implied annual withdrawal rate. The app flags it red if it exceeds 4%.</div>
+        </details>
+
+        <details style="margin-bottom:10px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:6px 0">Why does it say "Today's Money" everywhere?</summary>
+          <div style="padding:6px 0 6px 16px">Inflation means £100 today won't buy £100 worth of goods in 25 years. "Today's Money" adjusts future amounts so you can compare them meaningfully with what things cost right now. It's the most honest way to plan.</div>
+        </details>
+
+        <details style="margin-bottom:10px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);padding:6px 0">Is my data safe?</summary>
+          <div style="padding:6px 0 6px 16px">If signed in, data syncs via Firebase (Google Cloud). In local mode, data is stored in your browser's localStorage only. API keys for the AI advisor are stored locally and never sent to our servers — only to the AI provider you choose. Export backups regularly as a safety net.</div>
+        </details>
+
+      </div>
+    </div>
+
+    </div>`;
+}
+
 // ─── AI ADVISOR ──────────────────────────────────────────────────────
 const AI_PROVIDERS = {
   claude:  { name:"Claude",  color:"#d97706", icon:"✦", models: { default:"claude-opus-4-6" } },
@@ -4629,7 +4845,7 @@ if (typeof _origRenderAIMessages === "function") {
 // On desktop the nav stays hidden via CSS (display:none on #mobile-bottom-nav).
 
 const MOB_PRIMARY = ["dashboard","monthly","yearly","portfolio","retirement"];
-const MOB_MORE    = ["ai","settings"];
+const MOB_MORE    = ["ai","settings","guide"];
 
 function isMobile() { return window.innerWidth <= 768; }
 
@@ -4671,7 +4887,7 @@ function renderMobDrawer() {
   drawer.innerHTML = MOB_MORE.map(id => {
     const t = tabDefs.find(d => d.id === id);
     if (!t) return "";
-    const shortLabels = { ai:"AI Advisor", settings:"Settings" };
+    const shortLabels = { ai:"AI Advisor", settings:"Settings", guide:"Guide" };
     return `<button class="mob-drawer-btn ${id === active ? "active" : ""}"
       onclick="switchTab('${id}');closeMobDrawer()">
       <span class="mob-drawer-icon">${t.icon}</span>
