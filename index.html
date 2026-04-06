@@ -3422,10 +3422,14 @@ function getRetirementNumbers() {
   const taxRate = Math.min((state.retirementTaxRate ?? 0) / 100, 0.99);
   const grossNeeded = taxRate > 0 ? totalToday / (1 - taxRate) : totalToday;
 
-  // Sustainable monthly in today's money (gross) — use real rate since nestEgg is in today's money
-  const realWithdrawalRate = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100;
-  const sustainableMonthly = (nestEgg * realWithdrawalRate) / 12; // gross
-  const sustainableAfterTax = sustainableMonthly * (1 - taxRate); // what you actually keep
+  // Sustainable monthly in today's money (gross) — what the portfolio can sustain until life expectancy
+  // Uses annuity formula: PMT = PV × r / (1 - (1+r)^-n) where r=monthly real rate, n=months of retirement
+  const realMonthlyRate = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100 / 12;
+  const retirementMonths = Math.max(1, ((state.retirementLifeExpectancy || 90) - state.retirementAge) * 12);
+  const sustainableMonthly = realMonthlyRate > 0
+    ? nestEgg * realMonthlyRate / (1 - Math.pow(1 + realMonthlyRate, -retirementMonths))
+    : nestEgg / retirementMonths; // zero growth: simple division
+  const sustainableAfterTax = sustainableMonthly * (1 - taxRate);
 
   // Gap: compare after-tax income vs after-tax expenses
   const gap = sustainableAfterTax - totalToday;
