@@ -56,6 +56,10 @@ body.light-mode .chart-card { box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
 .line-item.paid * { pointer-events:none; }
 .line-item.paid .line-paid-cb { pointer-events:auto; opacity:1; filter:none; }
 * { margin: 0; padding: 0; box-sizing: border-box; }
+/* Hide number input spinners globally */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button { -webkit-appearance:none; margin:0; }
+input[type="number"] { -moz-appearance:textfield; }
 html, body { height: 100%; }
 body {
   font-family: 'DM Sans', sans-serif;
@@ -1863,6 +1867,29 @@ let saveTimeout = null;
 
 // ─── UTILS ───────────────────────────────────────────────────────────
 function esc(str) { const d=document.createElement("div"); d.textContent=str; return d.innerHTML; }
+// Debounced re-render: saves active element ID/position, re-renders, restores focus
+const _debouncers = {};
+function debouncedRender(key, fn, delay) {
+  delay = delay || 400;
+  clearTimeout(_debouncers[key]);
+  _debouncers[key] = setTimeout(() => {
+    const ae = document.activeElement;
+    const aeId = ae?.id || "";
+    const aeClass = ae?.className || "";
+    const aeVal = ae?.value;
+    const selStart = ae?.selectionStart;
+    fn();
+    // Restore focus to the same element
+    if (aeId) {
+      const el = document.getElementById(aeId);
+      if (el) { el.focus(); if (selStart !== undefined) try { el.setSelectionRange(selStart, selStart); } catch(e){} }
+    } else if (ae && aeClass) {
+      // Try to find by class + value match
+      const candidates = document.querySelectorAll("." + aeClass.split(" ").join("."));
+      for (const el of candidates) { if (el.value === aeVal) { el.focus(); break; } }
+    }
+  }, delay);
+}
 function fmt(val, cur) {
   cur = cur || state.currency;
   const c = val * EXCHANGE_RATES[cur];
@@ -2226,7 +2253,7 @@ function renderOnboarding() {
     c.innerHTML = `<div class="ob-step"><h2>Monthly Expenses</h2><p class="ob-desc">Your fixed and variable expenses</p><div id="ob-expenses"></div><button class="btn-add" onclick="state.baseExpenses.push({id:genId(),name:'',amount:0,type:'variable'});renderAll()">+ Add Expense</button><div class="ob-nav"><button class="btn-secondary" onclick="state.onboardStep=1;renderAll()">Back</button><button class="btn-primary" onclick="state.onboardStep=3;renderAll()">Next →</button></div></div>`;
     renderLineItems("ob-expenses", state.baseExpenses, "baseExpenses");
   } else if (state.onboardStep===3) {
-    c.innerHTML = `<div class="ob-step"><h2>Profile &amp; Savings</h2><p class="ob-desc">Set your retirement goals</p><div class="ob-fields"><div class="ob-field"><label>Monthly Savings (${sym})</label><input type="number" value="${Math.round(state.baseSavings*EXCHANGE_RATES[cur])}" onchange="state.baseSavings=this.value/${EXCHANGE_RATES[cur]};scheduleSave()"></div><div class="ob-field"><label>Current Age</label><input type="number" value="${state.currentAge}" onchange="state.currentAge=+this.value;scheduleSave()"></div><div class="ob-field"><label>Retirement Age</label><input type="number" value="${state.retirementAge}" onchange="state.retirementAge=+this.value;scheduleSave()"></div><div class="ob-field"><label>Growth Rate (%)</label><input type="number" step="0.5" value="${state.growthRate}" onchange="state.growthRate=+this.value;scheduleSave()"></div><div class="ob-field"><label>Inflation Rate (%)</label><input type="number" step="0.5" value="${state.inflationRate}" onchange="state.inflationRate=+this.value;scheduleSave()"></div></div><div class="ob-nav"><button class="btn-secondary" onclick="state.onboardStep=2;renderAll()">Back</button><button class="btn-primary" onclick="state.onboarded=true;state.activeTab='dashboard';scheduleSave();renderAll()">Launch Dashboard ✦</button></div></div>`;
+    c.innerHTML = `<div class="ob-step"><h2>Profile &amp; Savings</h2><p class="ob-desc">Set your retirement goals</p><div class="ob-fields"><div class="ob-field"><label>Monthly Savings (${sym})</label><input type="number" value="${Math.round(state.baseSavings*EXCHANGE_RATES[cur])}" oninput="state.baseSavings=this.value/${EXCHANGE_RATES[cur]};scheduleSave()"></div><div class="ob-field"><label>Current Age</label><input type="number" value="${state.currentAge}" oninput="state.currentAge=+this.value;scheduleSave()"></div><div class="ob-field"><label>Retirement Age</label><input type="number" value="${state.retirementAge}" oninput="state.retirementAge=+this.value;scheduleSave()"></div><div class="ob-field"><label>Growth Rate (%)</label><input type="number" value="${state.growthRate}" oninput="state.growthRate=+this.value;scheduleSave()"></div><div class="ob-field"><label>Inflation Rate (%)</label><input type="number" value="${state.inflationRate}" oninput="state.inflationRate=+this.value;scheduleSave()"></div></div><div class="ob-nav"><button class="btn-secondary" onclick="state.onboardStep=2;renderAll()">Back</button><button class="btn-primary" onclick="state.onboarded=true;state.activeTab='dashboard';scheduleSave();renderAll()">Launch Dashboard ✦</button></div></div>`;
   }
 }
 
@@ -2244,7 +2271,7 @@ function renderLineItems(containerId, items, stateKey, readOnly, showPaid) {
     const paidCb = showPaid
       ? `<div class="line-paid-wrap"><input type="checkbox" class="line-paid-cb" title="Mark as paid" ${isPaid?'checked':''} onchange="togglePaid('${stateKey}','${it.id}',this.checked,'${containerId}')"></div>`
       : '';
-    return `<div class="line-item${paidClass}" id="li-${stateKey.replace(/[^a-zA-Z0-9]/g,'-')}-${it.id}">${paidCb}<input class="line-name" value="${esc(it.name)}" ${readOnly?"disabled":""} placeholder="Name" onchange="updateLineItem('${stateKey}','${it.id}','name',this.value)"><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input class="line-amount" type="number" value="${Math.round(it.amount*rate)}" ${readOnly?"disabled":""} onchange="updateLineItem('${stateKey}','${it.id}','amount',this.value/${rate})"></div><select class="line-type" ${readOnly?"disabled":""} onchange="updateLineItem('${stateKey}','${it.id}','type',this.value)"><option value="fixed" ${it.type==="fixed"?"selected":""}>Fixed</option><option value="variable" ${it.type==="variable"?"selected":""}>Variable</option></select>${readOnly?"":`<button class="line-remove" onclick="removeLineItem('${stateKey}','${it.id}')">×</button>`}</div>`;
+    return `<div class="line-item${paidClass}" id="li-${stateKey.replace(/[^a-zA-Z0-9]/g,'-')}-${it.id}">${paidCb}<input class="line-name" value="${esc(it.name)}" ${readOnly?"disabled":""} placeholder="Name" oninput="updateLineItem('${stateKey}','${it.id}','name',this.value)"><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input class="line-amount" type="number" value="${Math.round(it.amount*rate)}" ${readOnly?"disabled":""} oninput="updateLineItem('${stateKey}','${it.id}','amount',this.value/${rate})"></div><select class="line-type" ${readOnly?"disabled":""} onchange="updateLineItem('${stateKey}','${it.id}','type',this.value)"><option value="fixed" ${it.type==="fixed"?"selected":""}>Fixed</option><option value="variable" ${it.type==="variable"?"selected":""}>Variable</option></select>${readOnly?"":`<button class="line-remove" onclick="removeLineItem('${stateKey}','${it.id}')">×</button>`}</div>`;
   }).join("");
 }
 
@@ -3259,9 +3286,9 @@ function renderPortfolio() {
           <button class="line-remove" onclick="state.externalAssets.splice(${idx},1);scheduleSave();renderPortfolio()">×</button>
         </div>
         <div class="ac-fields">
-          <div class="asset-field"><label>Monthly Payout (today's money)</label><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input type="number" value="${Math.round((a.monthlyPayout||0)*rate)}" oninput="state.externalAssets[${idx}].monthlyPayout=this.value/${rate};scheduleSave();renderPortfolio()"></div></div>
-          <div class="asset-field"><label>Starts at Age</label><div class="line-amount-wrap"><input type="number" value="${startAge}" oninput="state.externalAssets[${idx}].startAge=+this.value;scheduleSave();renderPortfolio()"></div></div>
-          <div class="asset-field"><label>Ends at Age (blank = lifetime)</label><div class="line-amount-wrap"><input type="number" value="${endAge||''}" placeholder="∞" oninput="state.externalAssets[${idx}].endAge=this.value?+this.value:null;scheduleSave();renderPortfolio()"></div></div>
+          <div class="asset-field"><label>Monthly Payout (today's money)</label><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input type="number" value="${Math.round((a.monthlyPayout||0)*rate)}" oninput="state.externalAssets[${idx}].monthlyPayout=this.value/${rate};scheduleSave();debouncedRender('port',renderPortfolio)"></div></div>
+          <div class="asset-field"><label>Starts at Age</label><div class="line-amount-wrap"><input type="number" value="${startAge}" oninput="state.externalAssets[${idx}].startAge=+this.value;scheduleSave();debouncedRender('port',renderPortfolio)"></div></div>
+          <div class="asset-field"><label>Ends at Age (blank = lifetime)</label><div class="line-amount-wrap"><input type="number" value="${endAge||''}" placeholder="∞" oninput="state.externalAssets[${idx}].endAge=this.value?+this.value:null;scheduleSave();debouncedRender('port',renderPortfolio)"></div></div>
         </div>
         <div class="ac-footer">
           <span class="ac-proj-label">Annual pension income:</span>
@@ -3288,9 +3315,9 @@ function renderPortfolio() {
         <button class="line-remove" onclick="state.externalAssets.splice(${idx},1);scheduleSave();renderPortfolio()">×</button>
       </div>
       <div class="ac-fields">
-        <div class="asset-field"><label>Current Balance</label><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input type="number" value="${Math.round(a.balance*rate)}" oninput="state.externalAssets[${idx}].balance=this.value/${rate};scheduleSave()"></div></div>
-        <div class="asset-field"><label>Monthly Contribution</label><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input type="number" value="${Math.round(a.monthlyContribution*rate)}" oninput="state.externalAssets[${idx}].monthlyContribution=this.value/${rate};scheduleSave()"></div></div>
-        <div class="asset-field"><label>Annual Growth Rate</label><div class="line-amount-wrap"><span class="line-currency">%</span><input type="number" step="0.5" value="${gr}" oninput="state.externalAssets[${idx}].growthRate=+this.value;scheduleSave();renderPortfolio()"></div></div>
+        <div class="asset-field"><label>Current Balance</label><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input type="number" value="${Math.round(a.balance*rate)}" oninput="state.externalAssets[${idx}].balance=this.value/${rate};scheduleSave();debouncedRender('port',renderPortfolio)"></div></div>
+        <div class="asset-field"><label>Monthly Contribution</label><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input type="number" value="${Math.round(a.monthlyContribution*rate)}" oninput="state.externalAssets[${idx}].monthlyContribution=this.value/${rate};scheduleSave();debouncedRender('port',renderPortfolio)"></div></div>
+        <div class="asset-field"><label>Annual Growth Rate</label><div class="line-amount-wrap"><span class="line-currency">%</span><input type="number" value="${gr}" oninput="state.externalAssets[${idx}].growthRate=+this.value;scheduleSave();debouncedRender('port',renderPortfolio)"></div></div>
       </div>
       <div class="ac-footer">
         <span class="ac-proj-label">Projected in ${ytr} yrs at ${gr}%:</span>
@@ -3437,8 +3464,8 @@ function renderSettings() {
               <span class="fx-label">${CURRENCY_SYMBOLS[c]} ${c}</span>
               <span class="fx-eq">1 SEK =</span>
               <div class="line-amount-wrap" style="max-width:140px">
-                <input type="number" step="0.001" class="line-amount" value="${r}" ${isSEK?"disabled":""} 
-                  onchange="state.exchangeRates['${c}']=+this.value;scheduleSave();renderAll()">
+                <input type="number" class="line-amount" value="${r}" ${isSEK?"disabled":""}
+                  oninput="state.exchangeRates['${c}']=+this.value;scheduleSave();debouncedRender('fx',renderAll)">
               </div>
               <span class="fx-hint" style="color:var(--text-muted);font-size:11px">${isSEK?"Base currency": c==="USD"?"≈ "+Math.round(1/r)+" SEK/$": c==="EUR"?"≈ "+Math.round(1/r)+" SEK/€": c==="GBP"?"≈ "+Math.round(1/r)+" SEK/£": "≈ "+(1/r).toFixed(2)+" SEK/KSh"}</span>
             </div>`;
@@ -3562,11 +3589,11 @@ function renderRetirement() {
     <div class="ret-exp-row">
       <span class="ret-exp-icon">${e.icon||"💸"}</span>
       <input class="line-name" style="flex:1" value="${esc(e.name)}" placeholder="Expense name"
-        onchange="state.retirementExpenses[${idx}].name=this.value;scheduleSave();renderRetirement()">
+        oninput="state.retirementExpenses[${idx}].name=this.value;scheduleSave();debouncedRender('ret',renderRetirement)">
       <div class="line-amount-wrap">
         <span class="line-currency">${sym}</span>
         <input class="line-amount" type="number" value="${Math.round(e.amount*rate)}"
-          onchange="state.retirementExpenses[${idx}].amount=this.value/${rate};scheduleSave();renderRetirement()">
+          oninput="state.retirementExpenses[${idx}].amount=this.value/${rate};scheduleSave();debouncedRender('ret',renderRetirement)">
       </div>
       <select class="line-type" onchange="state.retirementExpenses[${idx}].type=this.value;scheduleSave()">
         <option value="fixed" ${e.type==="fixed"?"selected":""}>Fixed</option>
@@ -3676,26 +3703,26 @@ function renderRetirement() {
           <h3>All Parameters</h3>
           <p class="ret-exp-subtitle">Controls projections, nest egg growth, runway, and sustainability.</p>
           <div class="ob-fields" style="margin-bottom:12px">
-            <div class="ob-field"><label>Current Age</label><input type="number" value="${state.currentAge}" onchange="state.currentAge=+this.value;scheduleSave();renderRetirement()"></div>
-            <div class="ob-field"><label>Retirement Age</label><input type="number" value="${state.retirementAge}" onchange="state.retirementAge=+this.value;scheduleSave();renderRetirement()"></div>
-            <div class="ob-field"><label>Annual Growth Rate (%)</label><input type="number" step="0.5" value="${state.growthRate}" onchange="state.growthRate=+this.value;scheduleSave();renderRetirement()"></div>
-            <div class="ob-field"><label>Inflation Rate (%)</label><input type="number" step="0.5" value="${state.inflationRate}" onchange="state.inflationRate=+this.value;scheduleSave();renderRetirement()"></div>
+            <div class="ob-field"><label>Current Age</label><input type="number" value="${state.currentAge}" oninput="state.currentAge=+this.value;scheduleSave();debouncedRender('ret',renderRetirement)"></div>
+            <div class="ob-field"><label>Retirement Age</label><input type="number" value="${state.retirementAge}" oninput="state.retirementAge=+this.value;scheduleSave();debouncedRender('ret',renderRetirement)"></div>
+            <div class="ob-field"><label>Annual Growth Rate (%)</label><input type="number" value="${state.growthRate}" oninput="state.growthRate=+this.value;scheduleSave();debouncedRender('ret',renderRetirement)"></div>
+            <div class="ob-field"><label>Inflation Rate (%)</label><input type="number" value="${state.inflationRate}" oninput="state.inflationRate=+this.value;scheduleSave();debouncedRender('ret',renderRetirement)"></div>
           </div>
           <div class="ret-params" style="border-top:1px solid var(--border);padding-top:12px">
             <div class="ret-param-row">
               <span class="ret-param-label">Post-retirement portfolio growth (%)</span>
-              <input class="ret-param-input" type="number" step="0.5" value="${state.retirementPostGrowthRate||4}"
-                onchange="state.retirementPostGrowthRate=+this.value;scheduleSave();renderRetirement()">
+              <input class="ret-param-input" type="number" value="${state.retirementPostGrowthRate||4}"
+                oninput="state.retirementPostGrowthRate=+this.value;scheduleSave();debouncedRender('ret',renderRetirement)">
             </div>
             <div class="ret-param-row">
               <span class="ret-param-label">Effective retirement tax rate (%)</span>
-              <input class="ret-param-input" type="number" step="1" min="0" max="99" value="${state.retirementTaxRate ?? 30}"
-                onchange="state.retirementTaxRate=+this.value;scheduleSave();renderRetirement()">
+              <input class="ret-param-input" type="number" value="${state.retirementTaxRate ?? 30}"
+                oninput="state.retirementTaxRate=+this.value;scheduleSave();debouncedRender('ret',renderRetirement)">
             </div>
             <div class="ret-param-row">
               <span class="ret-param-label">Life expectancy (age)</span>
               <input class="ret-param-input" type="number" value="${state.retirementLifeExpectancy||90}"
-                onchange="state.retirementLifeExpectancy=+this.value;scheduleSave();renderRetirement()">
+                oninput="state.retirementLifeExpectancy=+this.value;scheduleSave();debouncedRender('ret',renderRetirement)">
             </div>
           </div>
         </div>
@@ -4045,6 +4072,7 @@ function renderGuide() {
           <li style="margin-top:8px"><strong>Review the AI advisor.</strong> Ask it "What are my biggest financial risks?" or "When can I realistically retire?" — it sees all your data and can give personalised analysis.</li>
           <li style="margin-top:8px"><strong>Export backups regularly.</strong> Use Settings → Export Backup to save a JSON file. You can re-import it on any device.</li>
           <li style="margin-top:8px"><strong>The Fun Fund is your spending money.</strong> It's income minus expenses minus savings — what's genuinely left for discretionary spending each month.</li>
+          <li style="margin-top:8px"><strong>Just type into any field.</strong> All number inputs are free-type — no spinners or arrow keys needed. Type your value and all related calculations, projections, and charts update instantly as you type. No need to press Enter or navigate away.</li>
         </ul>
       </div>
     </div>
