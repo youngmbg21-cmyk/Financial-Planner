@@ -3460,7 +3460,9 @@ function getRetirementNumbers() {
   }
   const runoutAge = balance <= 0 ? state.retirementAge + months / 12 : null;
 
-  return { totalToday, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate };
+  const impliedWithdrawalRate = nestEgg > 0 ? (grossNeeded * 12 / nestEgg * 100) : 0;
+
+  return { totalToday, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate };
 }
 
 function renderRetirement() {
@@ -3613,6 +3615,56 @@ function renderRetirement() {
       </div>
     </div>
 
+    ${totalExp > 0 ? `
+    <!-- ═══ EXPENSE → INCOME → WITHDRAWAL FLOW ═══ -->
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;margin-bottom:24px">
+      <h3 style="font-size:16px;font-weight:600;margin-bottom:4px">Income Requirements</h3>
+      <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">What your retirement expenses demand from your portfolio (${scenLabels[nums.scenario]})</p>
+
+      <!-- Flow: Expenses → Gross Income → Net Income → Withdrawal Rate → Depletion -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">
+        <div class="sust-num">
+          <div class="sust-num-label">Monthly Expenses</div>
+          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalToday)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalToday*12)}/yr</div>
+        </div>
+        <div class="sust-num">
+          <div class="sust-num-label">Required Gross Income</div>
+          <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.grossNeeded)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.grossNeeded*12)}/yr · +${Math.round(nums.taxRate*100)}% tax gross-up</div>
+        </div>
+        <div class="sust-num">
+          <div class="sust-num-label">Required Net Income</div>
+          <div class="sust-num-value" style="color:var(--blue)">${fmt(nums.totalToday)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">After ${Math.round(nums.taxRate*100)}% tax</div>
+        </div>
+        <div class="sust-num">
+          <div class="sust-num-label">Implied Withdrawal Rate</div>
+          <div class="sust-num-value" style="color:${(nums.nestEgg>0&&nums.grossNeeded*12/nums.nestEgg*100>4)?"var(--red)":"var(--green)"}">${nums.nestEgg>0?(nums.grossNeeded*12/nums.nestEgg*100).toFixed(1):"∞"}%</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${(nums.nestEgg>0&&nums.grossNeeded*12/nums.nestEgg*100>4)?'Above':'Within'} the 4% safe rate</div>
+        </div>
+        <div class="sust-num">
+          <div class="sust-num-label">Fund Depletion</div>
+          <div class="sust-num-value" style="color:${nums.runoutAge?"var(--red)":"var(--green)"}">${nums.runoutAge?"Age "+Math.round(nums.runoutAge):"Never"}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${nums.runoutAge?Math.round(nums.runoutAge-state.retirementAge)+"yrs of retirement":"Surplus at "+nums.lifeExp+"+"}</div>
+        </div>
+      </div>
+
+      <!-- Flow arrow visualization -->
+      <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-muted);flex-wrap:wrap;padding:8px 12px;background:var(--bg-deep);border-radius:8px">
+        <span style="color:var(--text-primary);font-weight:600">${fmt(nums.totalToday)}/mo expenses</span>
+        <span>→</span>
+        <span>÷ ${(1-nums.taxRate).toFixed(2)} tax</span>
+        <span>→</span>
+        <span style="color:var(--amber);font-weight:600">${fmt(nums.grossNeeded)}/mo gross</span>
+        <span>→</span>
+        <span>÷ ${fmt(nums.nestEgg)} nest egg</span>
+        <span>=</span>
+        <span style="color:${(nums.nestEgg>0&&nums.grossNeeded*12/nums.nestEgg*100>4)?"var(--red)":"var(--green)"};font-weight:700">${nums.nestEgg>0?(nums.grossNeeded*12/nums.nestEgg*100).toFixed(1):"∞"}% withdrawal rate</span>
+      </div>
+    </div>
+    ` : ""}
+
     <!-- Sustainability Analysis -->
     <div class="sustainability-card">
       <div class="sust-header">
@@ -3633,16 +3685,24 @@ function renderRetirement() {
 
       <div class="sust-numbers">
         <div class="sust-num">
-          <div class="sust-num-label">Gross Withdrawal/mo</div>
-          <div class="sust-num-value" style="color:var(--blue)">${fmt(nums.sustainableMonthly)}</div>
+          <div class="sust-num-label">Portfolio Can Sustain (Gross)</div>
+          <div class="sust-num-value" style="color:var(--blue)">${fmt(nums.sustainableMonthly)}/mo</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.sustainableMonthly*12)}/yr</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">After-Tax Income/mo</div>
-          <div class="sust-num-value" style="color:var(--green)">${fmt(nums.sustainableAfterTax)}</div>
+          <div class="sust-num-label">Portfolio Can Sustain (Net)</div>
+          <div class="sust-num-value" style="color:var(--green)">${fmt(nums.sustainableAfterTax)}/mo</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.sustainableAfterTax*12)}/yr after ${Math.round(nums.taxRate*100)}% tax</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">Monthly Gap (after tax)</div>
+          <div class="sust-num-label">You Need (Net)</div>
+          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalToday)}/mo</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalToday*12)}/yr expenses</div>
+        </div>
+        <div class="sust-num">
+          <div class="sust-num-label">Monthly Gap (After Tax)</div>
           <div class="sust-num-value" style="color:${nums.gap>=0?"var(--green)":"var(--red)"}">${nums.gap>=0?"+":""}${fmt(nums.gap)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${nums.gap>=0?"Buffer":"Shortfall"} of ${fmt(Math.abs(nums.gap)*12)}/yr</div>
         </div>
       </div>
 
@@ -3841,6 +3901,7 @@ ${(()=>{
 - Effective retirement tax rate: ${state.retirementTaxRate ?? 0}%
 - After-tax sustainable income: ${fmt(sustainableAfterTax)}/mo
 - Gross withdrawal needed to cover expenses: ${fmt(grossNeeded)}/mo
+- Implied withdrawal rate: ${realNestEgg>0?(grossNeeded*12/realNestEgg*100).toFixed(1):"N/A"}% (${realNestEgg>0&&grossNeeded*12/realNestEgg*100>4?"ABOVE":"within"} the 4% safe rate)
 - Monthly gap (after tax): ${gap>=0?"surplus":"shortfall"} of ${fmt(Math.abs(gap))}
 - Life expectancy set to: ${state.retirementLifeExpectancy||90}
 - Retirement scenario: ${state.retirementScenario||"baseline"}`;
