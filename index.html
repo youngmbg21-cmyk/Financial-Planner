@@ -3498,18 +3498,24 @@ function getRetirementNumbers() {
   const retExpenses = (state.retirementExpenses || []);
   const totalExpenses = sum(retExpenses, "amount") * mult;
 
-  // Pension income offsets expenses (both in today's money)
+  // Pension income (gross, in today's money)
   const pensionIncome = getTotalPensionIncome();
-  const totalToday = Math.max(0, totalExpenses - pensionIncome);
+
+  // Tax: expenses are after-tax needs. Total gross income must cover expenses after tax.
+  // Both pension and portfolio withdrawal are taxed together.
+  const taxRate = Math.min((state.retirementTaxRate ?? 0) / 100, 0.99);
+  const totalGrossNeeded = taxRate > 0 ? totalExpenses / (1 - taxRate) : totalExpenses;
+
+  // Portfolio withdrawal = total gross income needed minus pension (both gross, both taxed)
+  const grossNeeded = Math.max(0, totalGrossNeeded - pensionIncome);
+
+  // Net amount from portfolio after tax
+  const totalToday = grossNeeded * (1 - taxRate);
 
   // Use real nest egg (already deflated back to today's purchasing power)
   const proj = getProjectionData();
   const nestEgg = proj.length ? proj[proj.length-1].realTotal : 0;
   const nominalNestEgg = proj.length ? proj[proj.length-1].total : 0;
-
-  // Tax gross-up: net expenses (after pension) need portfolio withdrawal
-  const taxRate = Math.min((state.retirementTaxRate ?? 0) / 100, 0.99);
-  const grossNeeded = taxRate > 0 ? totalToday / (1 - taxRate) : totalToday;
 
   // Sustainable monthly in today's money (gross) — what the portfolio can sustain until life expectancy
   // Uses annuity formula: PMT = PV × r / (1 - (1+r)^-n) where r=monthly real rate, n=months of retirement
@@ -3520,9 +3526,10 @@ function getRetirementNumbers() {
     : nestEgg / retirementMonths; // zero growth: simple division
   const sustainableAfterTax = sustainableMonthly * (1 - taxRate);
 
-  // Gap: compare after-tax income vs after-tax expenses
-  const gap = sustainableAfterTax - totalToday;
-  const coveragePct = totalToday > 0 ? (sustainableAfterTax / totalToday) * 100 : 100;
+  // Gap: compare total after-tax income (pension + portfolio) vs total expenses
+  const totalAfterTaxIncome = pensionIncome * (1 - taxRate) + sustainableAfterTax;
+  const gap = totalAfterTaxIncome - totalExpenses;
+  const coveragePct = totalExpenses > 0 ? (totalAfterTaxIncome / totalExpenses) * 100 : 100;
 
   // Verdict
   let verdict, verdictIcon, verdictClass;
@@ -3544,8 +3551,9 @@ function getRetirementNumbers() {
       const end = p.endAge || 999;
       if (age >= start && age < end) pensionAtAge += (p.monthlyPayout || 0);
     });
-    const netNeed = Math.max(0, totalExpenses - pensionAtAge);
-    return taxRate > 0 ? netNeed / (1 - taxRate) : netNeed;
+    // Total gross income needed to cover expenses after tax, minus pension (gross)
+    const totalGross = taxRate > 0 ? totalExpenses / (1 - taxRate) : totalExpenses;
+    return Math.max(0, totalGross - pensionAtAge);
   }
 
   let balance = nestEgg, months = 0;
@@ -3571,7 +3579,7 @@ function getRetirementNumbers() {
 
   const impliedWithdrawalRate = nestEgg > 0 ? (grossNeeded * 12 / nestEgg * 100) : 0;
 
-  return { totalToday, totalExpenses, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate };
+  return { totalToday, totalExpenses, totalGrossNeeded, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, totalAfterTaxIncome, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate };
 }
 
 function renderRetirement() {
@@ -3736,32 +3744,27 @@ function renderRetirement() {
       <h3 style="font-size:16px;font-weight:600;margin-bottom:4px">Income Requirements</h3>
       <p style="font-size:12px;color:var(--text-muted);margin-bottom:16px">What your retirement expenses demand from your portfolio (${scenLabels[nums.scenario]})</p>
 
-      <!-- Flow: Expenses → Gross Income → Net Income → Withdrawal Rate → Depletion -->
+      <!-- Flow: Expenses → Total Gross → Pension → Portfolio Withdrawal → Rate → Depletion -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">
         <div class="sust-num">
-          <div class="sust-num-label">Total Expenses</div>
+          <div class="sust-num-label">Expenses (After Tax)</div>
           <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalExpenses)}</div>
           <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalExpenses*12)}/yr</div>
         </div>
-        ${nums.pensionIncome > 0 ? `<div class="sust-num">
-          <div class="sust-num-label">Pension Income</div>
-          <div class="sust-num-value" style="color:var(--amber)">−${fmt(nums.pensionIncome)}</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.pensionIncome*12)}/yr offsets expenses</div>
-        </div>
         <div class="sust-num">
-          <div class="sust-num-label">Net from Portfolio</div>
-          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalToday)}</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalToday*12)}/yr after pension</div>
+          <div class="sust-num-label">Total Gross Income Needed</div>
+          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalGrossNeeded)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalGrossNeeded*12)}/yr · ÷(1−${Math.round(nums.taxRate*100)}% tax)</div>
+        </div>
+        ${nums.pensionIncome > 0 ? `<div class="sust-num">
+          <div class="sust-num-label">Pension Income (Gross)</div>
+          <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.pensionIncome)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.pensionIncome*12)}/yr · taxed at ${Math.round(nums.taxRate*100)}%</div>
         </div>` : ""}
         <div class="sust-num">
-          <div class="sust-num-label">Required Gross Withdrawal</div>
+          <div class="sust-num-label">Portfolio Withdrawal (Gross)</div>
           <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.grossNeeded)}</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.grossNeeded*12)}/yr · +${Math.round(nums.taxRate*100)}% tax gross-up</div>
-        </div>
-        <div class="sust-num">
-          <div class="sust-num-label">Required Net Income</div>
-          <div class="sust-num-value" style="color:var(--blue)">${fmt(nums.totalToday)}</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">After ${Math.round(nums.taxRate*100)}% tax</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.grossNeeded*12)}/yr ${nums.pensionIncome>0?"(after pension)":""}</div>
         </div>
         <div class="sust-num">
           <div class="sust-num-label">Implied Withdrawal Rate</div>
@@ -3778,11 +3781,12 @@ function renderRetirement() {
       <!-- Flow arrow visualization -->
       <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-muted);flex-wrap:wrap;padding:8px 12px;background:var(--bg-deep);border-radius:8px">
         <span style="color:var(--text-primary);font-weight:600">${fmt(nums.totalExpenses)}/mo expenses</span>
-        ${nums.pensionIncome > 0 ? `<span>−</span><span style="color:var(--amber)">${fmt(nums.pensionIncome)} pension</span><span>=</span><span style="font-weight:600">${fmt(nums.totalToday)} net</span>` : ""}
-        <span>→</span>
-        <span>÷ ${(1-nums.taxRate).toFixed(2)} tax</span>
-        <span>→</span>
-        <span style="color:var(--amber);font-weight:600">${fmt(nums.grossNeeded)}/mo gross</span>
+        <span>÷ ${(1-nums.taxRate).toFixed(2)}</span>
+        <span>=</span>
+        <span style="font-weight:600">${fmt(nums.totalGrossNeeded)} gross needed</span>
+        ${nums.pensionIncome > 0 ? `<span>−</span><span style="color:var(--amber)">${fmt(nums.pensionIncome)} pension</span>` : ""}
+        <span>=</span>
+        <span style="color:var(--amber);font-weight:600">${fmt(nums.grossNeeded)}/mo from portfolio</span>
         <span>→</span>
         <span>÷ ${fmt(nums.nestEgg)} nest egg</span>
         <span>=</span>
@@ -3801,29 +3805,34 @@ function renderRetirement() {
             <div class="sust-verdict-text ${nums.verdictClass}">${nums.verdict}</div>
           </div>
         </div>
-        <div style="font-size:13px;color:var(--text-muted);max-width:320px;line-height:1.6">
-          Your real nest egg of <strong style="color:var(--text-primary)">${fmt(nums.nestEgg)}</strong> (in today's money) sustains 
-          <strong style="color:var(--green)">${fmt(nums.sustainableMonthly)}/mo gross</strong>, which is 
-          <strong style="color:var(--green)">${fmt(nums.sustainableAfterTax)}/mo after ${Math.round(nums.taxRate*100)}% tax</strong>. 
-          Your projected retirement spend is <strong style="color:var(--text-primary)">${fmt(nums.totalToday)}/mo</strong>.
+        <div style="font-size:13px;color:var(--text-muted);max-width:380px;line-height:1.6">
+          Your total after-tax income (pension + portfolio) is
+          <strong style="color:var(--green)">${fmt(nums.totalAfterTaxIncome)}/mo</strong>.
+          You need <strong style="color:var(--text-primary)">${fmt(nums.totalExpenses)}/mo</strong> in expenses.
+          ${nums.pensionIncome>0?`Pension covers <strong style="color:var(--amber)">${fmt(nums.pensionIncome)}/mo gross</strong>; portfolio provides <strong style="color:var(--green)">${fmt(nums.sustainableMonthly)}/mo gross</strong>.`:`Portfolio sustains <strong style="color:var(--green)">${fmt(nums.sustainableMonthly)}/mo gross</strong> (${fmt(nums.sustainableAfterTax)}/mo after ${Math.round(nums.taxRate*100)}% tax).`}
         </div>
       </div>
 
       <div class="sust-numbers">
+        ${nums.pensionIncome > 0 ? `<div class="sust-num">
+          <div class="sust-num-label">Pension Income (Gross)</div>
+          <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.pensionIncome)}/mo</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.pensionIncome*12)}/yr</div>
+        </div>` : ""}
         <div class="sust-num">
           <div class="sust-num-label">Portfolio Can Sustain (Gross)</div>
           <div class="sust-num-value" style="color:var(--blue)">${fmt(nums.sustainableMonthly)}/mo</div>
           <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.sustainableMonthly*12)}/yr</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">Portfolio Can Sustain (Net)</div>
-          <div class="sust-num-value" style="color:var(--green)">${fmt(nums.sustainableAfterTax)}/mo</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.sustainableAfterTax*12)}/yr after ${Math.round(nums.taxRate*100)}% tax</div>
+          <div class="sust-num-label">Total After-Tax Income</div>
+          <div class="sust-num-value" style="color:var(--green)">${fmt(nums.totalAfterTaxIncome)}/mo</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalAfterTaxIncome*12)}/yr after ${Math.round(nums.taxRate*100)}% tax</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">You Need (Net)</div>
-          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalToday)}/mo</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalToday*12)}/yr expenses</div>
+          <div class="sust-num-label">You Need (After Tax)</div>
+          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalExpenses)}/mo</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalExpenses*12)}/yr expenses</div>
         </div>
         <div class="sust-num">
           <div class="sust-num-label">Monthly Gap (After Tax)</div>
