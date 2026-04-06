@@ -1920,8 +1920,9 @@ function getProjectionData() {
   const ytr = Math.max(0, state.retirementAge - state.currentAge);
   const data = [];
   let appAcc = 0, prevAppAcc = 0;
-  const assetAcc = state.externalAssets.map(a=>a.balance);
-  let prevExtTotal = state.externalAssets.reduce((s,a)=>s+a.balance,0);
+  const investAssets = state.externalAssets.filter(a => (a.assetType || "investment") === "investment");
+  const assetAcc = investAssets.map(a=>a.balance);
+  let prevExtTotal = investAssets.reduce((s,a)=>s+a.balance,0);
 
   for (let y=0; y<=ytr; y++) {
     const year = CURRENT_YEAR+y;
@@ -1947,7 +1948,7 @@ function getProjectionData() {
     let ext = 0;
     let extContribThisYear = 0;
     let prevExtAcc = 0;
-    state.externalAssets.forEach((a,idx)=>{
+    investAssets.forEach((a,idx)=>{
       const rAsset = (a.growthRate ?? state.growthRate) / 100 / 12;
       prevExtAcc += assetAcc[idx];
       extContribThisYear += a.monthlyContribution * monthsThisYear;
@@ -1975,7 +1976,7 @@ function getProjectionData() {
   // Calculate cumulative contributions and growth
   let cumContrib = 0, cumGrowth = 0;
   // Add initial external balances as starting contributions
-  const initialExtBalance = state.externalAssets.reduce((s,a)=>s+a.balance,0);
+  const initialExtBalance = investAssets.reduce((s,a)=>s+a.balance,0);
   cumContrib = initialExtBalance;
   for (let i=0; i<data.length; i++) {
     cumContrib += data[i].yearlyContrib;
@@ -2355,8 +2356,8 @@ function renderTicker() {
   const savRate = ti > 0 ? ((state.baseSavings/ti)*100).toFixed(1) : 0;
   const surplus = ti - te - state.baseSavings;
   const surplusRate = ti > 0 ? ((surplus/ti)*100).toFixed(1) : 0;
-  const extBal = state.externalAssets.reduce((s,a)=>s+a.balance,0);
-  const extContrib = state.externalAssets.reduce((s,a)=>s+a.monthlyContribution,0);
+  const extBal = getInvestmentAssets().reduce((s,a)=>s+a.balance,0);
+  const extContrib = getInvestmentAssets().reduce((s,a)=>s+(a.monthlyContribution||0),0);
   const ytr = Math.max(0, state.retirementAge - state.currentAge);
   
   const items = [
@@ -2635,7 +2636,7 @@ function renderDashboard() {
       <p style="color:var(--text-muted);font-size:12px;margin-bottom:12px">Each component's projected value in today's money (${state.inflationRate}% inflation)</p>
       <div class="nest-breakdown-table">
         <div class="nbt-header"><span>Source</span><span>Balance</span><span>Monthly</span><span>Rate</span><span>Nominal</span><span>Today's Money</span></div>
-        ${state.externalAssets.map(a=>{
+        ${getInvestmentAssets().map(a=>{
           const gr = a.growthRate ?? state.growthRate;
           const nominal = futureValue(a.balance, a.monthlyContribution, gr, ytr);
           const real = nominal / Math.pow(1+state.inflationRate/100, ytr);
@@ -2876,7 +2877,7 @@ function renderDashboard() {
   const deflate = (val, y) => isReal ? Math.round(val / Math.pow(1 + state.inflationRate/100, y)) : val;
 
   // Build per-asset year-by-year data
-  const perAsset = state.externalAssets.map(a => {
+  const perAsset = getInvestmentAssets().map(a => {
     const gr = (a.growthRate ?? state.growthRate) / 100 / 12;
     let bal = a.balance;
     const vals = [];
@@ -3215,19 +3216,64 @@ window.addYearlyItem = function(field) {
 };
 
 // ─── PORTFOLIO ───────────────────────────────────────────────────────
+function getInvestmentAssets() { return state.externalAssets.filter(a => (a.assetType || "investment") === "investment"); }
+function getPensionAssets() { return state.externalAssets.filter(a => a.assetType === "pension"); }
+function getTotalPensionIncome() {
+  return getPensionAssets().reduce((s, p) => {
+    const startAge = p.startAge ?? state.retirementAge;
+    const endAge = p.endAge || 999;
+    // Only count if pension is active during retirement
+    if (startAge <= state.retirementAge && endAge > state.retirementAge) return s + (p.monthlyPayout || 0);
+    return s;
+  }, 0);
+}
+
 function renderPortfolio() {
-  const teb = sum(state.externalAssets,"balance");
-  const tec = sum(state.externalAssets,"monthlyContribution");
+  const investments = getInvestmentAssets();
+  const pensions = getPensionAssets();
+  const teb = sum(investments,"balance");
+  const tec = sum(investments,"monthlyContribution");
   const ytr = Math.max(0, state.retirementAge - state.currentAge);
   const inflRate = state.inflationRate;
   const inflFactor = Math.pow(1 + inflRate/100, ytr);
-  const projExt = state.externalAssets.reduce((s,a)=>s+futureValue(a.balance,a.monthlyContribution,(a.growthRate??state.growthRate),ytr),0);
+  const projExt = investments.reduce((s,a)=>s+futureValue(a.balance,a.monthlyContribution,(a.growthRate??state.growthRate),ytr),0);
   const realProjExt = projExt / inflFactor;
+  const totalPensionMo = getTotalPensionIncome();
   const cur = state.currency;
   const sym = CURRENCY_SYMBOLS[cur];
   const rate = EXCHANGE_RATES[cur];
 
   const assetRows = state.externalAssets.map((a,idx)=>{
+    const aType = a.assetType || "investment";
+    if (aType === "pension") {
+      // Pension card
+      const startAge = a.startAge ?? state.retirementAge;
+      const endAge = a.endAge || null;
+      return `<div class="asset-card" style="border-left:3px solid var(--amber)">
+        <div class="ac-header">
+          <input class="asset-name" value="${esc(a.name)}" placeholder="Pension Name" oninput="state.externalAssets[${idx}].name=this.value;scheduleSave()">
+          <select style="background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--amber);font-size:11px;font-weight:600" onchange="state.externalAssets[${idx}].assetType=this.value;scheduleSave();renderPortfolio()">
+            <option value="investment">Investment</option>
+            <option value="pension" selected>Pension</option>
+          </select>
+          <button class="line-remove" onclick="state.externalAssets.splice(${idx},1);scheduleSave();renderPortfolio()">×</button>
+        </div>
+        <div class="ac-fields">
+          <div class="asset-field"><label>Monthly Payout (today's money)</label><div class="line-amount-wrap"><span class="line-currency">${sym}</span><input type="number" value="${Math.round((a.monthlyPayout||0)*rate)}" oninput="state.externalAssets[${idx}].monthlyPayout=this.value/${rate};scheduleSave();renderPortfolio()"></div></div>
+          <div class="asset-field"><label>Starts at Age</label><div class="line-amount-wrap"><input type="number" value="${startAge}" oninput="state.externalAssets[${idx}].startAge=+this.value;scheduleSave();renderPortfolio()"></div></div>
+          <div class="asset-field"><label>Ends at Age (blank = lifetime)</label><div class="line-amount-wrap"><input type="number" value="${endAge||''}" placeholder="∞" oninput="state.externalAssets[${idx}].endAge=this.value?+this.value:null;scheduleSave();renderPortfolio()"></div></div>
+        </div>
+        <div class="ac-footer">
+          <span class="ac-proj-label">Annual pension income:</span>
+          <span class="ac-proj-value" style="color:var(--amber)">${fmt((a.monthlyPayout||0)*12)}/yr</span>
+        </div>
+        <div class="ac-footer" style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px">
+          <span class="ac-proj-label" style="font-size:11px;color:var(--text-muted)">Reduces retirement withdrawal by ${fmt(a.monthlyPayout||0)}/mo — not included in nest egg balance</span>
+        </div>
+      </div>`;
+    }
+
+    // Investment card (existing)
     const gr = a.growthRate ?? state.growthRate;
     const realGr = gr - inflRate;
     const projVal = futureValue(a.balance, a.monthlyContribution, gr, ytr);
@@ -3235,6 +3281,10 @@ function renderPortfolio() {
     return `<div class="asset-card">
       <div class="ac-header">
         <input class="asset-name" value="${esc(a.name)}" placeholder="Account Name" oninput="state.externalAssets[${idx}].name=this.value;scheduleSave()">
+        <select style="background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text-secondary);font-size:11px" onchange="state.externalAssets[${idx}].assetType=this.value;scheduleSave();renderPortfolio()">
+          <option value="investment" selected>Investment</option>
+          <option value="pension">Pension</option>
+        </select>
         <button class="line-remove" onclick="state.externalAssets.splice(${idx},1);scheduleSave();renderPortfolio()">×</button>
       </div>
       <div class="ac-fields">
@@ -3253,21 +3303,24 @@ function renderPortfolio() {
     </div>`;
   }).join("");
 
-  const weightedAvgRate = state.externalAssets.length > 0
-    ? state.externalAssets.reduce((s,a)=> s + (a.growthRate ?? state.growthRate) * (a.balance || 1), 0) / state.externalAssets.reduce((s,a)=> s + (a.balance || 1), 0)
+  const weightedAvgRate = investments.length > 0
+    ? investments.reduce((s,a)=> s + (a.growthRate ?? state.growthRate) * (a.balance || 1), 0) / investments.reduce((s,a)=> s + (a.balance || 1), 0)
     : state.growthRate;
   const realWeightedAvg = weightedAvgRate - inflRate;
 
   document.getElementById("view-portfolio").innerHTML = `
-    <div class="section-header"><h2>External Portfolio</h2><p>Track pensions, 401k, index funds alongside your app savings. Each account has its own growth rate.</p></div>
+    <div class="section-header"><h2>External Portfolio</h2><p>Track investments and pension plans. Investments grow your nest egg; pensions reduce your retirement withdrawal.</p></div>
     <div class="portfolio-summary">
-      ${kpiHTML("Total External Balance",fmt(teb),state.externalAssets.length+" accounts","◈","#6366f1")}
-      ${kpiHTML("Total Monthly Contributions",fmt(tec),"Across all accounts","▲","#10b981")}
-      ${kpiHTML("Projected (Nominal)",fmt(projExt),`${ytr} yrs · avg ${weightedAvgRate.toFixed(1)}% weighted`,"☀","#f59e0b")}
-      ${kpiHTML("Projected (Today's Money)",fmt(realProjExt),`${inflRate}% inflation · ${realWeightedAvg.toFixed(1)}% real return`,"☀","#06b6d4")}
+      ${kpiHTML("Investment Balance",fmt(teb),investments.length+" investment account"+(investments.length!==1?"s":""),"◈","#6366f1")}
+      ${kpiHTML("Monthly Contributions",fmt(tec),"Into investment accounts","▲","#10b981")}
+      ${kpiHTML("Projected (Today's Money)",fmt(realProjExt),`${ytr} yrs · ${realWeightedAvg.toFixed(1)}% real return`,"☀","#06b6d4")}
+      ${totalPensionMo > 0 ? kpiHTML("Pension Income",fmt(totalPensionMo)+"/mo",pensions.length+" pension plan"+(pensions.length!==1?"s":"")+" · "+fmt(totalPensionMo*12)+"/yr","🏛","#f59e0b") : kpiHTML("Projected (Nominal)",fmt(projExt),`${ytr} yrs · ${weightedAvgRate.toFixed(1)}% weighted avg`,"☀","#f59e0b")}
     </div>
     <div class="asset-cards">${assetRows}</div>
-    <button class="btn-add wide" onclick="state.externalAssets.push({id:genId(),name:'',balance:0,monthlyContribution:0,growthRate:7});scheduleSave();renderPortfolio()">+ Add External Account</button>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <button class="btn-add" style="flex:1" onclick="state.externalAssets.push({id:genId(),name:'',balance:0,monthlyContribution:0,growthRate:7,assetType:'investment'});scheduleSave();renderPortfolio()">+ Add Investment Account</button>
+      <button class="btn-add" style="flex:1;border-color:var(--amber);color:var(--amber)" onclick="state.externalAssets.push({id:genId(),name:'',monthlyPayout:0,startAge:state.retirementAge,endAge:null,assetType:'pension'});scheduleSave();renderPortfolio()">+ Add Pension Plan</button>
+    </div>
     <div class="chart-card" style="margin-top:24px">
       <h3>Asset Growth (Today's Money)</h3>
       <p style="color:var(--text-muted);font-size:13px;margin-bottom:12px">Each asset's projected value adjusted for ${inflRate}% inflation</p>
@@ -3276,7 +3329,7 @@ function renderPortfolio() {
 
   // Build per-asset projection data adjusted for inflation
   const assetColors = ["#10b981","#6366f1","#f59e0b","#ec4899","#06b6d4","#8b5cf6","#f97316"];
-  const assetProjections = state.externalAssets.map(a => {
+  const assetProjections = investments.map(a => {
     const gr = (a.growthRate ?? state.growthRate) / 100 / 12;
     const data = [];
     let balance = a.balance;
@@ -3416,14 +3469,18 @@ function getRetirementNumbers() {
   // Everything in TODAY'S money — expenses are entered in today's currency,
   // and we compare against the REAL (inflation-adjusted) nest egg so it's apples-to-apples.
   const retExpenses = (state.retirementExpenses || []);
-  const totalToday = sum(retExpenses, "amount") * mult;
+  const totalExpenses = sum(retExpenses, "amount") * mult;
+
+  // Pension income offsets expenses (both in today's money)
+  const pensionIncome = getTotalPensionIncome();
+  const totalToday = Math.max(0, totalExpenses - pensionIncome);
 
   // Use real nest egg (already deflated back to today's purchasing power)
   const proj = getProjectionData();
   const nestEgg = proj.length ? proj[proj.length-1].realTotal : 0;
   const nominalNestEgg = proj.length ? proj[proj.length-1].total : 0;
 
-  // Tax gross-up: expenses are after-tax, so we need more gross withdrawal to cover them
+  // Tax gross-up: net expenses (after pension) need portfolio withdrawal
   const taxRate = Math.min((state.retirementTaxRate ?? 0) / 100, 0.99);
   const grossNeeded = taxRate > 0 ? totalToday / (1 - taxRate) : totalToday;
 
@@ -3448,15 +3505,31 @@ function getRetirementNumbers() {
   else { verdict="Underfunded"; verdictIcon="❌"; verdictClass="underfunded"; }
 
   // Drawdown runway: withdraw gross amount needed to cover after-tax expenses
-  // Since balance and withdrawal are both in today's money, use real growth rate (nominal - inflation)
+  // Pension income varies by age (some pensions start/stop at different ages)
   const realPostGrowth = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100 / 12;
-  const monthlyWithdrawal = grossNeeded; // gross withdrawal needed
+  const pensions = getPensionAssets();
+
+  function getGrossNeededAtAge(age) {
+    // Recalculate pension income for this specific age
+    let pensionAtAge = 0;
+    pensions.forEach(p => {
+      const start = p.startAge ?? state.retirementAge;
+      const end = p.endAge || 999;
+      if (age >= start && age < end) pensionAtAge += (p.monthlyPayout || 0);
+    });
+    const netNeed = Math.max(0, totalExpenses - pensionAtAge);
+    return taxRate > 0 ? netNeed / (1 - taxRate) : netNeed;
+  }
+
   let balance = nestEgg, months = 0;
-  let runwayData = [{ age: state.retirementAge, balance: nestEgg, annualIncome: grossNeeded * 12 }];
+  const initialGross = getGrossNeededAtAge(state.retirementAge);
+  let runwayData = [{ age: state.retirementAge, balance: nestEgg, annualIncome: initialGross * 12 }];
   const lifeExp = state.retirementLifeExpectancy || 90;
   const maxMonths = (lifeExp - state.retirementAge) * 12 + 120;
   let yearlyDrawn = 0;
   while (balance > 0 && months < maxMonths) {
+    const currentAge = state.retirementAge + months / 12;
+    const monthlyWithdrawal = getGrossNeededAtAge(currentAge);
     const drawn = Math.min(monthlyWithdrawal, balance);
     balance = balance * (1 + realPostGrowth) - drawn;
     yearlyDrawn += drawn;
@@ -3471,7 +3544,7 @@ function getRetirementNumbers() {
 
   const impliedWithdrawalRate = nestEgg > 0 ? (grossNeeded * 12 / nestEgg * 100) : 0;
 
-  return { totalToday, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate };
+  return { totalToday, totalExpenses, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate };
 }
 
 function renderRetirement() {
@@ -3639,12 +3712,22 @@ function renderRetirement() {
       <!-- Flow: Expenses → Gross Income → Net Income → Withdrawal Rate → Depletion -->
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px">
         <div class="sust-num">
-          <div class="sust-num-label">Monthly Expenses</div>
-          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalToday)}</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalToday*12)}/yr</div>
+          <div class="sust-num-label">Total Expenses</div>
+          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalExpenses)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalExpenses*12)}/yr</div>
+        </div>
+        ${nums.pensionIncome > 0 ? `<div class="sust-num">
+          <div class="sust-num-label">Pension Income</div>
+          <div class="sust-num-value" style="color:var(--amber)">−${fmt(nums.pensionIncome)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.pensionIncome*12)}/yr offsets expenses</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">Required Gross Income</div>
+          <div class="sust-num-label">Net from Portfolio</div>
+          <div class="sust-num-value" style="color:var(--text-primary)">${fmt(nums.totalToday)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalToday*12)}/yr after pension</div>
+        </div>` : ""}
+        <div class="sust-num">
+          <div class="sust-num-label">Required Gross Withdrawal</div>
           <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.grossNeeded)}</div>
           <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.grossNeeded*12)}/yr · +${Math.round(nums.taxRate*100)}% tax gross-up</div>
         </div>
@@ -3667,7 +3750,8 @@ function renderRetirement() {
 
       <!-- Flow arrow visualization -->
       <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-muted);flex-wrap:wrap;padding:8px 12px;background:var(--bg-deep);border-radius:8px">
-        <span style="color:var(--text-primary);font-weight:600">${fmt(nums.totalToday)}/mo expenses</span>
+        <span style="color:var(--text-primary);font-weight:600">${fmt(nums.totalExpenses)}/mo expenses</span>
+        ${nums.pensionIncome > 0 ? `<span>−</span><span style="color:var(--amber)">${fmt(nums.pensionIncome)} pension</span><span>=</span><span style="font-weight:600">${fmt(nums.totalToday)} net</span>` : ""}
         <span>→</span>
         <span>÷ ${(1-nums.taxRate).toFixed(2)} tax</span>
         <span>→</span>
@@ -4034,7 +4118,8 @@ function buildFinancialContext() {
   const proj = getProjectionData();
   const nestEgg = proj.length ? proj[proj.length-1].total : 0;
   const ytr = Math.max(0, state.retirementAge - state.currentAge);
-  const extBal = state.externalAssets.reduce((s,a)=>s+a.balance,0);
+  const extBal = getInvestmentAssets().reduce((s,a)=>s+a.balance,0);
+  const pensionMo = getTotalPensionIncome();
 
   // ── 12-month rolling cash flow ──
   const monthly = getMonthlyData();
@@ -4108,8 +4193,9 @@ Projection milestones:
 ${milestones}
 
 ━━ EXTERNAL PORTFOLIO ━━
-- Total Balance: ${fmt(extBal)}
-${state.externalAssets.length>0 ? state.externalAssets.map(a=>`- ${a.name||"Asset"}: balance=${fmt(a.balance)}, monthly contrib=${fmt(a.monthlyContribution)}, growth=${a.growthRate}%`).join("\n") : "- No external assets added"}
+- Total Investment Balance: ${fmt(extBal)}
+${getInvestmentAssets().length>0 ? getInvestmentAssets().map(a=>`- ${a.name||"Asset"} [investment]: balance=${fmt(a.balance)}, monthly contrib=${fmt(a.monthlyContribution||0)}, growth=${a.growthRate}%`).join("\n") : "- No investment accounts"}
+${getPensionAssets().length>0 ? `- Total Pension Income at Retirement: ${fmt(pensionMo)}/mo\n${getPensionAssets().map(p=>`- ${p.name||"Pension"} [pension]: ${fmt(p.monthlyPayout||0)}/mo from age ${p.startAge||state.retirementAge}${p.endAge?" to "+p.endAge:""}`).join("\n")}` : "- No pension plans added"}
 
 ━━ RETIREMENT EXPENSE FORECAST ━━
 ${(()=>{
