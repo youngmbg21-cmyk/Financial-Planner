@@ -3573,11 +3573,14 @@ function getRetirementNumbers() {
   const fundSurvives = !runoutAge || runoutAge > lifeExp;
 
   // Coverage: what % of total retirement spending can the portfolio + pension cover?
-  // Use the weighted average monthly income across all retirement years from the simulation
-  const totalRetMonths = Math.max(1, (lifeExp - state.retirementAge) * 12);
-  const totalPortfolioDrawn = runwayData.reduce((s,p) => s + (p.annualPortfolio || 0), 0);
-  const totalPensionDrawn = runwayData.reduce((s,p) => s + (p.annualPension || 0), 0);
-  const avgMonthlyGrossIncome = (totalPortfolioDrawn + totalPensionDrawn) / totalRetMonths;
+  // Use the weighted average monthly income across retirement years from the simulation
+  // Only count years up to life expectancy, skip initial entry (projected, not actual)
+  const retYears = Math.max(1, lifeExp - state.retirementAge);
+  const yearsInData = runwayData.filter((p,i) => i > 0 && p.age <= lifeExp);
+  const actualYears = Math.max(1, yearsInData.length);
+  const totalPortfolioDrawn = yearsInData.reduce((s,p) => s + (p.annualPortfolio || 0), 0);
+  const totalPensionDrawn = yearsInData.reduce((s,p) => s + (p.annualPension || 0), 0);
+  const avgMonthlyGrossIncome = (totalPortfolioDrawn + totalPensionDrawn) / (actualYears * 12);
   const avgMonthlyAfterTax = avgMonthlyGrossIncome * (1 - taxRate);
   const totalAfterTaxIncome = avgMonthlyAfterTax;
   const gap = totalAfterTaxIncome - totalExpenses;
