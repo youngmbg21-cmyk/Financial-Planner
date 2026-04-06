@@ -3543,43 +3543,51 @@ function getRetirementNumbers() {
   const realPostGrowth = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100 / 12;
   const pensions = getPensionAssets();
 
-  function getGrossNeededAtAge(age) {
-    // Recalculate pension income for this specific age
+  function getIncomeBreakdownAtAge(age) {
     let pensionAtAge = 0;
     pensions.forEach(p => {
       const start = p.startAge ?? state.retirementAge;
       const end = p.endAge || 999;
       if (age >= start && age < end) pensionAtAge += (p.monthlyPayout || 0);
     });
-    // Total gross income needed to cover expenses after tax, minus pension (gross)
     const totalGross = taxRate > 0 ? totalExpenses / (1 - taxRate) : totalExpenses;
-    return Math.max(0, totalGross - pensionAtAge);
+    const portfolioGross = Math.max(0, totalGross - pensionAtAge);
+    return { pensionGross: pensionAtAge, portfolioGross, totalGross };
   }
 
+  const initBreakdown = getIncomeBreakdownAtAge(state.retirementAge);
   let balance = nestEgg, months = 0;
-  const initialGross = getGrossNeededAtAge(state.retirementAge);
-  let runwayData = [{ age: state.retirementAge, balance: nestEgg, annualIncome: initialGross * 12 }];
+  let runwayData = [{ age: state.retirementAge, balance: nestEgg, annualPortfolio: initBreakdown.portfolioGross * 12, annualPension: initBreakdown.pensionGross * 12 }];
   const lifeExp = state.retirementLifeExpectancy || 90;
   const maxMonths = (lifeExp - state.retirementAge) * 12 + 120;
-  let yearlyDrawn = 0;
+  let yearlyPortfolio = 0, yearlyPension = 0;
   while (balance > 0 && months < maxMonths) {
     const currentAge = state.retirementAge + months / 12;
-    const monthlyWithdrawal = getGrossNeededAtAge(currentAge);
-    const drawn = Math.min(monthlyWithdrawal, balance);
+    const bd = getIncomeBreakdownAtAge(currentAge);
+    const drawn = Math.min(bd.portfolioGross, balance);
     balance = balance * (1 + realPostGrowth) - drawn;
-    yearlyDrawn += drawn;
+    yearlyPortfolio += drawn;
+    yearlyPension += bd.pensionGross;
     months++;
     if (months % 12 === 0) {
       const age = state.retirementAge + months / 12;
-      runwayData.push({ age, balance: Math.max(0, Math.round(balance)), annualIncome: Math.round(yearlyDrawn) });
-      yearlyDrawn = 0;
+      runwayData.push({ age, balance: Math.max(0, Math.round(balance)), annualPortfolio: Math.round(yearlyPortfolio), annualPension: Math.round(yearlyPension) });
+      yearlyPortfolio = 0;
+      yearlyPension = 0;
     }
   }
   const runoutAge = balance <= 0 ? state.retirementAge + months / 12 : null;
 
   const impliedWithdrawalRate = nestEgg > 0 ? (grossNeeded * 12 / nestEgg * 100) : 0;
 
-  return { totalToday, totalExpenses, totalGrossNeeded, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, totalAfterTaxIncome, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate };
+  // Phase breakdown: find earliest pension start age to define the gap period
+  const earliestPensionAge = pensions.length > 0 ? Math.min(...pensions.map(p => p.startAge ?? state.retirementAge)) : state.retirementAge;
+  const hasGapPhase = earliestPensionAge > state.retirementAge;
+  const prePensionBreakdown = hasGapPhase ? getIncomeBreakdownAtAge(state.retirementAge) : null;
+  const postPensionBreakdown = getIncomeBreakdownAtAge(earliestPensionAge);
+  const gapYears = hasGapPhase ? earliestPensionAge - state.retirementAge : 0;
+
+  return { totalToday, totalExpenses, totalGrossNeeded, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, totalAfterTaxIncome, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate, hasGapPhase, prePensionBreakdown, postPensionBreakdown, gapYears, earliestPensionAge };
 }
 
 function renderRetirement() {
@@ -3635,29 +3643,36 @@ function renderRetirement() {
   // ── Runway chart data ──
   const runwayPoints = nums.runwayData;
   const maxBal = Math.max(...runwayPoints.map(p => p.balance), 1) * 1.1;
-  const maxIncome = Math.max(...runwayPoints.map(p => p.annualIncome || 0), 1) * 1.2;
+  const maxIncome = Math.max(...runwayPoints.map(p => (p.annualPortfolio||0) + (p.annualPension||0)), 1) * 1.2;
   const svgW = 660, svgH = 220, padL = 56, padR = 56, padT = 20, padB = 34;
   const innerW = svgW - padL - padR, innerH = svgH - padT - padB;
   const xScale = i => padL + (i / Math.max(runwayPoints.length - 1, 1)) * innerW;
   const yScale = v => padT + innerH - Math.max(0, Math.min(v, maxBal) / maxBal) * innerH;
-  const yScaleR = v => padT + innerH - Math.max(0, Math.min(v, maxIncome) / maxIncome) * innerH;
   const pathD = runwayPoints.map((p,i) => `${i===0?"M":"L"}${xScale(i).toFixed(1)},${yScale(p.balance).toFixed(1)}`).join(" ");
   const fillD = pathD + ` L${xScale(runwayPoints.length-1).toFixed(1)},${(padT+innerH).toFixed(1)} L${padL},${(padT+innerH).toFixed(1)} Z`;
 
-  // Annual income bars
+  // Stacked annual income bars: portfolio (amber) + pension (blue) stacked
   const barW = Math.max(3, Math.min(12, innerW / runwayPoints.length * 0.6));
   const incomeBars = runwayPoints.map((p,i) => {
-    if (!p.annualIncome || i === 0) return "";
-    const barH = (p.annualIncome / maxIncome) * innerH;
+    if (i === 0) return "";
+    const portfolio = p.annualPortfolio || 0;
+    const pension = p.annualPension || 0;
+    const total = portfolio + pension;
+    if (total === 0) return "";
     const x = xScale(i) - barW/2;
-    const y = padT + innerH - barH;
-    const opacity = p.balance > 0 ? "0.35" : "0.15";
-    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="1.5" fill="var(--amber)" opacity="${opacity}"/>`;
+    const opacity = p.balance > 0 ? "0.45" : "0.15";
+    // Portfolio bar (bottom, amber)
+    const portH = (portfolio / maxIncome) * innerH;
+    const portY = padT + innerH - portH;
+    // Pension bar (stacked on top, blue)
+    const pensH = (pension / maxIncome) * innerH;
+    const pensY = portY - pensH;
+    return `<rect x="${x.toFixed(1)}" y="${portY.toFixed(1)}" width="${barW.toFixed(1)}" height="${portH.toFixed(1)}" rx="1" fill="var(--amber)" opacity="${opacity}"/>${pensH > 0 ? `<rect x="${x.toFixed(1)}" y="${pensY.toFixed(1)}" width="${barW.toFixed(1)}" height="${pensH.toFixed(1)}" rx="1" fill="var(--blue)" opacity="${opacity}"/>` : ""}`;
   }).join("");
 
   // Right Y-axis labels (income)
   const rYLabels = [0,0.5,1].map(v =>
-    `<text x="${svgW-padR+4}" y="${(padT+innerH*(1-v)+4).toFixed(1)}" font-size="9" fill="var(--amber)" text-anchor="start" opacity="0.7">${fmtCompact(maxIncome*v)}</text>`
+    `<text x="${svgW-padR+4}" y="${(padT+innerH*(1-v)+4).toFixed(1)}" font-size="9" fill="var(--text-muted)" text-anchor="start" opacity="0.7">${fmtCompact(maxIncome*v)}</text>`
   ).join("");
 
   // X-axis labels (every 5 years)
@@ -3792,6 +3807,24 @@ function renderRetirement() {
         <span>=</span>
         <span style="color:${(nums.nestEgg>0&&nums.grossNeeded*12/nums.nestEgg*100>4)?"var(--red)":"var(--green)"};font-weight:700">${nums.nestEgg>0?(nums.grossNeeded*12/nums.nestEgg*100).toFixed(1):"∞"}% withdrawal rate</span>
       </div>
+
+      ${nums.hasGapPhase ? `
+      <!-- Phase breakdown for gap between retirement and pension -->
+      <div style="margin-top:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="background:var(--bg-deep);border-radius:8px;padding:14px;border-left:3px solid var(--red)">
+          <div style="font-size:11px;font-weight:600;color:var(--red);margin-bottom:8px;letter-spacing:.4px">PHASE 1: AGE ${state.retirementAge}–${nums.earliestPensionAge-1} (${nums.gapYears} years, no pension)</div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-muted)">Portfolio withdrawal</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--amber)">${fmt(nums.prePensionBreakdown.portfolioGross)}/mo</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-muted)">Pension income</span><span style="font-family:'JetBrains Mono',monospace;color:var(--text-muted)">$0</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--text-muted)">Withdrawal rate</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${nums.nestEgg>0&&nums.prePensionBreakdown.portfolioGross*12/nums.nestEgg*100>4?"var(--red)":"var(--green)"}">${nums.nestEgg>0?(nums.prePensionBreakdown.portfolioGross*12/nums.nestEgg*100).toFixed(1):"∞"}%</span></div>
+        </div>
+        <div style="background:var(--bg-deep);border-radius:8px;padding:14px;border-left:3px solid var(--green)">
+          <div style="font-size:11px;font-weight:600;color:var(--green);margin-bottom:8px;letter-spacing:.4px">PHASE 2: AGE ${nums.earliestPensionAge}+ (pension active)</div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-muted)">Portfolio withdrawal</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--amber)">${fmt(nums.postPensionBreakdown.portfolioGross)}/mo</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-muted)">Pension income</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--blue)">${fmt(nums.postPensionBreakdown.pensionGross)}/mo</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--text-muted)">Withdrawal rate</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${nums.nestEgg>0&&nums.postPensionBreakdown.portfolioGross*12/nums.nestEgg*100>4?"var(--red)":"var(--green)"}">${nums.nestEgg>0?(nums.postPensionBreakdown.portfolioGross*12/nums.nestEgg*100).toFixed(1):"∞"}%</span></div>
+        </div>
+      </div>
+      ` : ""}
     </div>
     ` : ""}
 
@@ -3885,7 +3918,7 @@ function renderRetirement() {
         <path d="${pathD}" fill="none" stroke="${nums.runoutAge?"var(--red)":"var(--green)"}" stroke-width="2.5" stroke-linejoin="round"/>
         <!-- Right Y-axis labels (income) -->
         ${rYLabels}
-        <text x="${svgW-padR+4}" y="${padT-6}" font-size="8" fill="var(--amber)" text-anchor="start" opacity="0.6">Annual Income</text>
+        <text x="${svgW-padR+4}" y="${padT-6}" font-size="8" fill="var(--text-muted)" text-anchor="start" opacity="0.6">Income/yr</text>
         <!-- Markers -->
         ${runoutMarker}
         ${leMarker}
@@ -3895,6 +3928,12 @@ function renderRetirement() {
         <circle cx="${padL}" cy="${yScale(nums.nestEgg).toFixed(1)}" r="5" fill="var(--blue)"/>
         <text x="${padL+8}" y="${(yScale(nums.nestEgg)+14).toFixed(1)}" font-size="10" fill="var(--blue)">Retire age ${state.retirementAge}</text>
       </svg>
+      <div style="display:flex;gap:16px;margin-top:10px;font-size:11px;color:var(--text-muted);flex-wrap:wrap">
+        <span><span style="color:var(--green)">━</span> Portfolio balance (left axis)</span>
+        <span><span style="color:var(--amber)">█</span> Portfolio withdrawal</span>
+        ${nums.pensionIncome > 0 ? `<span><span style="color:var(--blue)">█</span> Pension income</span>` : ""}
+        ${nums.hasGapPhase ? `<span style="color:var(--violet)">⚡ Pension starts at age ${nums.earliestPensionAge} (${nums.gapYears}yr gap)</span>` : ""}
+      </div>
       ${milestones.length > 0 ? `
       <div class="runway-milestones">
         ${milestones.map(p=>`<div class="runway-ms">
