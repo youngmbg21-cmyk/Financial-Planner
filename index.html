@@ -1104,13 +1104,20 @@ body.light-mode .ticker-bar { background:#0a0a1a; }
   border-left: 1px solid var(--border);
   box-shadow: -8px 0 40px rgba(0,0,0,0.35);
   transform: translateX(100%);
-  transition: transform .3s cubic-bezier(.4,0,.2,1);
+  transition: transform .3s cubic-bezier(.4,0,.2,1), width .25s ease;
   pointer-events: none;
 }
 #ai-slide-panel.open {
   transform: translateX(0);
   pointer-events: all;
 }
+#ai-slide-panel.expanded { width: min(780px, 90vw); }
+.aip-expand {
+  background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+  width: 30px; height: 30px; border-radius: 7px; cursor: pointer; font-size: 14px;
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+.aip-expand:hover { border-color: var(--green); color: var(--green); }
 
 .aip-header {
   display: flex;
@@ -1514,6 +1521,7 @@ body.light-mode .ticker-bar { background:#0a0a1a; }
       <div class="aip-title">AI Financial Advisor</div>
       <div class="aip-sub" id="aip-provider-sub">Powered by Claude</div>
     </div>
+    <button class="aip-expand" id="aip-expand-btn" onclick="aipToggleExpand()" title="Expand/collapse panel">⇔</button>
     <button class="aip-close" onclick="closeAIPanel()" title="Close">✕</button>
   </div>
 
@@ -3414,9 +3422,9 @@ function getRetirementNumbers() {
   const taxRate = Math.min((state.retirementTaxRate ?? 0) / 100, 0.99);
   const grossNeeded = taxRate > 0 ? totalToday / (1 - taxRate) : totalToday;
 
-  // Sustainable monthly in today's money (gross)
-  const withdrawalRate = (state.retirementPostGrowthRate || 4) / 100;
-  const sustainableMonthly = (nestEgg * withdrawalRate) / 12; // gross
+  // Sustainable monthly in today's money (gross) — use real rate since nestEgg is in today's money
+  const realWithdrawalRate = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100;
+  const sustainableMonthly = (nestEgg * realWithdrawalRate) / 12; // gross
   const sustainableAfterTax = sustainableMonthly * (1 - taxRate); // what you actually keep
 
   // Gap: compare after-tax income vs after-tax expenses
@@ -3431,18 +3439,23 @@ function getRetirementNumbers() {
   else { verdict="Underfunded"; verdictIcon="❌"; verdictClass="underfunded"; }
 
   // Drawdown runway: withdraw gross amount needed to cover after-tax expenses
-  const postGrowth = (state.retirementPostGrowthRate || 4) / 100 / 12;
+  // Since balance and withdrawal are both in today's money, use real growth rate (nominal - inflation)
+  const realPostGrowth = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100 / 12;
   const monthlyWithdrawal = grossNeeded; // gross withdrawal needed
   let balance = nestEgg, months = 0;
-  let runwayData = [{ age: state.retirementAge, balance: nestEgg }];
+  let runwayData = [{ age: state.retirementAge, balance: nestEgg, annualIncome: grossNeeded * 12 }];
   const lifeExp = state.retirementLifeExpectancy || 90;
   const maxMonths = (lifeExp - state.retirementAge) * 12 + 120;
+  let yearlyDrawn = 0;
   while (balance > 0 && months < maxMonths) {
-    balance = balance * (1 + postGrowth) - monthlyWithdrawal;
+    const drawn = Math.min(monthlyWithdrawal, balance);
+    balance = balance * (1 + realPostGrowth) - drawn;
+    yearlyDrawn += drawn;
     months++;
     if (months % 12 === 0) {
       const age = state.retirementAge + months / 12;
-      runwayData.push({ age, balance: Math.max(0, Math.round(balance)) });
+      runwayData.push({ age, balance: Math.max(0, Math.round(balance)), annualIncome: Math.round(yearlyDrawn) });
+      yearlyDrawn = 0;
     }
   }
   const runoutAge = balance <= 0 ? state.retirementAge + months / 12 : null;
@@ -3502,13 +3515,31 @@ function renderRetirement() {
 
   // ── Runway chart data ──
   const runwayPoints = nums.runwayData;
-  const maxBal = Math.max(...runwayPoints.map(p => p.balance), 1) * 1.1; // true max + 10% headroom
-  const svgW = 600, svgH = 220, padL = 56, padR = 24, padT = 20, padB = 34;
+  const maxBal = Math.max(...runwayPoints.map(p => p.balance), 1) * 1.1;
+  const maxIncome = Math.max(...runwayPoints.map(p => p.annualIncome || 0), 1) * 1.2;
+  const svgW = 660, svgH = 220, padL = 56, padR = 56, padT = 20, padB = 34;
   const innerW = svgW - padL - padR, innerH = svgH - padT - padB;
   const xScale = i => padL + (i / Math.max(runwayPoints.length - 1, 1)) * innerW;
   const yScale = v => padT + innerH - Math.max(0, Math.min(v, maxBal) / maxBal) * innerH;
+  const yScaleR = v => padT + innerH - Math.max(0, Math.min(v, maxIncome) / maxIncome) * innerH;
   const pathD = runwayPoints.map((p,i) => `${i===0?"M":"L"}${xScale(i).toFixed(1)},${yScale(p.balance).toFixed(1)}`).join(" ");
   const fillD = pathD + ` L${xScale(runwayPoints.length-1).toFixed(1)},${(padT+innerH).toFixed(1)} L${padL},${(padT+innerH).toFixed(1)} Z`;
+
+  // Annual income bars
+  const barW = Math.max(3, Math.min(12, innerW / runwayPoints.length * 0.6));
+  const incomeBars = runwayPoints.map((p,i) => {
+    if (!p.annualIncome || i === 0) return "";
+    const barH = (p.annualIncome / maxIncome) * innerH;
+    const x = xScale(i) - barW/2;
+    const y = padT + innerH - barH;
+    const opacity = p.balance > 0 ? "0.35" : "0.15";
+    return `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="1.5" fill="var(--amber)" opacity="${opacity}"/>`;
+  }).join("");
+
+  // Right Y-axis labels (income)
+  const rYLabels = [0,0.5,1].map(v =>
+    `<text x="${svgW-padR+4}" y="${(padT+innerH*(1-v)+4).toFixed(1)}" font-size="9" fill="var(--amber)" text-anchor="start" opacity="0.7">${fmtCompact(maxIncome*v)}</text>`
+  ).join("");
 
   // X-axis labels (every 5 years)
   const xLabels = runwayPoints.filter(p => p.age % 5 === 0).map(p => {
@@ -3638,7 +3669,7 @@ function renderRetirement() {
     <!-- Longevity Runway Chart -->
     <div class="runway-card">
       <h3>Longevity Runway</h3>
-      <p class="runway-subtitle">How long your real nest egg lasts — withdrawing ${fmt(nums.grossNeeded)}/mo gross (${fmt(nums.totalToday)}/mo after ${Math.round(nums.taxRate*100)}% tax) at ${state.retirementPostGrowthRate||4}% portfolio growth.</p>
+      <p class="runway-subtitle">How long your real nest egg lasts — withdrawing ${fmt(nums.grossNeeded)}/mo gross (${fmt(nums.totalToday)}/mo after ${Math.round(nums.taxRate*100)}% tax) at ${Math.max(0,(state.retirementPostGrowthRate||4)-state.inflationRate).toFixed(1)}% real growth (${state.retirementPostGrowthRate||4}% − ${state.inflationRate}% inflation).</p>
       <svg viewBox="0 0 ${svgW} ${svgH}" style="width:100%;height:auto;display:block">
         <defs>
           <linearGradient id="runwayGrad" x1="0" y1="0" x2="0" y2="1">
@@ -3651,10 +3682,15 @@ function renderRetirement() {
           <line x1="${padL}" y1="${(padT+innerH*(1-v)).toFixed(1)}" x2="${svgW-padR}" y2="${(padT+innerH*(1-v)).toFixed(1)}" stroke="var(--border)" stroke-width="0.5"/>
           <text x="${padL-4}" y="${(padT+innerH*(1-v)+4).toFixed(1)}" font-size="9" fill="var(--text-muted)" text-anchor="end">${fmtCompact(maxBal*v)}</text>
         `).join("")}
+        <!-- Annual income bars (right Y-axis) -->
+        ${incomeBars}
         <!-- Fill -->
         <path d="${fillD}" fill="url(#runwayGrad)"/>
         <!-- Line -->
         <path d="${pathD}" fill="none" stroke="${nums.runoutAge?"var(--red)":"var(--green)"}" stroke-width="2.5" stroke-linejoin="round"/>
+        <!-- Right Y-axis labels (income) -->
+        ${rYLabels}
+        <text x="${svgW-padR+4}" y="${padT-6}" font-size="8" fill="var(--amber)" text-anchor="start" opacity="0.6">Annual Income</text>
         <!-- Markers -->
         ${runoutMarker}
         ${leMarker}
@@ -4473,6 +4509,14 @@ async function aipSendMessage(text) {
 window.aipSend = function() {
   const ta = document.getElementById("aip-textarea");
   if (ta) aipSendMessage(ta.value);
+};
+
+window.aipToggleExpand = function() {
+  const panel = document.getElementById("ai-slide-panel");
+  const btn = document.getElementById("aip-expand-btn");
+  if (!panel) return;
+  panel.classList.toggle("expanded");
+  if (btn) btn.textContent = panel.classList.contains("expanded") ? "⇆" : "⇔";
 };
 
 function aipToggleContext(cb) {
