@@ -3885,28 +3885,36 @@ function renderRetirement() {
         <div class="sust-num">
           <div class="sust-num-label">Coverage</div>
           <div class="sust-num-value" style="color:${nums.coveragePct>=95?"var(--green)":nums.coveragePct>=75?"var(--amber)":"var(--red)"}">${nums.coveragePct.toFixed(0)}%</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${nums.gap>=0?`+${fmt(nums.gap)}/mo surplus`:`${fmt(Math.abs(nums.gap))}/mo avg shortfall`}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${Math.abs(nums.gap)<1?"Fully covered":nums.gap>=0?`+${fmt(nums.gap)}/mo surplus`:`${fmt(Math.abs(nums.gap))}/mo avg shortfall`}</div>
         </div>
       </div>
 
-      ${totalExp > 0 ? `
+      ${totalExp > 0 ? (()=>{
+        const gapOk = nums.gap >= -1; // treat tiny floating point negatives as balanced
+        const isBalanced = Math.abs(nums.gap) < 1;
+        const barColor = gapOk ? "var(--green)" : "var(--red)";
+        const gapLabel = isBalanced ? "✓ Fully covered" : gapOk ? `✓ Surplus of ${fmt(nums.gap)}/mo` : `✕ Shortfall of ${fmt(Math.abs(nums.gap))}/mo`;
+        return `
       <div class="sust-bar-wrap">
         <div class="sust-bar-label">
           <span>Expense coverage: ${nums.coveragePct.toFixed(0)}%</span>
-          <span style="color:${nums.gap>=0?"var(--green)":"var(--red)"}">${nums.gap>=0?"✓ Surplus":"✕ Shortfall"} of ${fmt(Math.abs(nums.gap))}/mo</span>
+          <span style="color:${barColor}">${gapLabel}</span>
         </div>
         <div class="sust-bar-track">
-          <div class="sust-bar-fill" style="width:${Math.min(nums.coveragePct,100)}%;background:${nums.gap>=0?"var(--green)":"var(--red)"}"></div>
+          <div class="sust-bar-fill" style="width:${Math.min(nums.coveragePct,100)}%;background:${barColor}"></div>
         </div>
       </div>
-      ${nums.gap < 0 ? `<div class="inflation-note" style="margin-top:16px;border-left:3px solid var(--red)">
-        ⚠️ To close this gap, you'd need to save an additional <strong>${fmt(Math.abs(nums.gap)*12)}/yr</strong> more, 
-        or delay retirement to age <strong>${Math.round(state.retirementAge + Math.abs(nums.gap)/(state.baseSavings||1)*12)}</strong>, 
+      ${!gapOk ? `<div class="inflation-note" style="margin-top:16px;border-left:3px solid var(--red)">
+        ⚠️ To close this gap, you'd need to save an additional <strong>${fmt(Math.abs(nums.gap)*12)}/yr</strong> more,
+        or delay retirement to age <strong>${Math.round(state.retirementAge + Math.abs(nums.gap)/(state.baseSavings||1)*12)}</strong>,
         or reduce your retirement spending by <strong>${(100-nums.coveragePct).toFixed(0)}%</strong>.
+      </div>` : isBalanced ? `<div class="inflation-note" style="margin-top:16px;border-left:3px solid var(--green)">
+        ✅ Your income exactly covers your projected retirement expenses. Consider building a small buffer for unexpected costs.
       </div>` : `<div class="inflation-note" style="margin-top:16px;border-left:3px solid var(--green)">
         ✅ Your savings more than cover your projected retirement expenses. You have a buffer of <strong>${fmt(nums.gap)}/mo</strong> — consider travel, gifts, or legacy goals.
       </div>`}
-      ` : `<p style="color:var(--text-muted);font-size:14px;text-align:center;padding:20px 0">Enter your retirement expenses above to see the sustainability analysis.</p>`}
+      `;})()
+      : `<p style="color:var(--text-muted);font-size:14px;text-align:center;padding:20px 0">Enter your retirement expenses above to see the sustainability analysis.</p>`}
     </div>
 
     <!-- Longevity Runway Chart -->
