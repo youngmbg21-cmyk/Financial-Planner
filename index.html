@@ -2484,15 +2484,11 @@ function renderDashboard() {
   const realGrowth = state.growthRate - state.inflationRate;
 
   // Freedom number: total nest egg required to fund retirement expenses
-  // Uses the weighted average gross portfolio withdrawal from the runway simulation
   const retNums = getRetirementNumbers();
   const hasRetExp = sum(state.retirementExpenses||[],"amount") > 0;
   const realRate = Math.max(0.001, Math.max(0,(state.retirementPostGrowthRate||4)-state.inflationRate)/100);
-  // Compute avg annual portfolio withdrawal from runway (excludes pension, phase-weighted)
-  const rwYears = retNums.runwayData.filter((p,i) => i > 0 && p.age <= retNums.lifeExp);
-  const avgAnnualPortfolioWithdrawal = rwYears.length > 0 ? rwYears.reduce((s,p) => s + (p.annualPortfolio||0), 0) / rwYears.length : (retNums.grossNeeded * 12);
-  const freedomNestEgg = hasRetExp && avgAnnualPortfolioWithdrawal > 0
-    ? Math.round(avgAnnualPortfolioWithdrawal / realRate)
+  const freedomNestEgg = hasRetExp && retNums.avgMonthlyPortfolioGross > 0
+    ? Math.round(retNums.avgMonthlyPortfolioGross * 12 / realRate)
     : Math.round(realNestEgg);
   const freedomGap = realNestEgg - freedomNestEgg;
   const freedomPct = freedomNestEgg > 0 ? Math.round(realNestEgg / freedomNestEgg * 100) : 100;
@@ -3590,6 +3586,11 @@ function getRetirementNumbers() {
   const gap = totalAfterTaxIncome - totalExpenses;
   const coveragePct = totalExpenses > 0 ? (totalAfterTaxIncome / totalExpenses) * 100 : 100;
 
+  // Average portfolio withdrawal rate (weighted across all phases)
+  const avgAnnualPortfolioWithdrawal = totalPortfolioDrawn / actualYears;
+  const avgWithdrawalRate = nestEgg > 0 ? (avgAnnualPortfolioWithdrawal / nestEgg * 100) : 0;
+  const avgMonthlyPortfolioGross = avgAnnualPortfolioWithdrawal / 12;
+
   // Verdict based on fund survival and coverage
   let verdict, verdictIcon, verdictClass;
   if (fundSurvives && coveragePct >= 95) { verdict="Well Funded"; verdictIcon="✅"; verdictClass="overfunded"; }
@@ -3606,7 +3607,7 @@ function getRetirementNumbers() {
     : nestEgg / retirementMonths;
   const sustainableAfterTax = sustainableMonthly * (1 - taxRate);
 
-  return { totalToday, totalExpenses, totalGrossNeeded, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, totalAfterTaxIncome, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate, hasGapPhase, prePensionBreakdown, postPensionBreakdown, gapYears, earliestPensionAge, fundSurvives, balanceAtLifeExp };
+  return { totalToday, totalExpenses, totalGrossNeeded, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, totalAfterTaxIncome, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate, avgWithdrawalRate, avgMonthlyPortfolioGross, hasGapPhase, prePensionBreakdown, postPensionBreakdown, gapYears, earliestPensionAge, fundSurvives, balanceAtLifeExp };
 }
 
 function renderRetirement() {
@@ -3796,14 +3797,14 @@ function renderRetirement() {
           <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.pensionIncome*12)}/yr · taxed at ${Math.round(nums.taxRate*100)}%</div>
         </div>` : ""}
         <div class="sust-num">
-          <div class="sust-num-label">Portfolio Withdrawal (Gross)</div>
-          <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.grossNeeded)}</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.grossNeeded*12)}/yr ${nums.pensionIncome>0?"(after pension)":""}</div>
+          <div class="sust-num-label">Avg Portfolio Withdrawal</div>
+          <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.avgMonthlyPortfolioGross)}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.avgMonthlyPortfolioGross*12)}/yr · weighted across phases</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">Implied Withdrawal Rate</div>
-          <div class="sust-num-value" style="color:${(nums.nestEgg>0&&nums.grossNeeded*12/nums.nestEgg*100>4)?"var(--red)":"var(--green)"}">${nums.nestEgg>0?(nums.grossNeeded*12/nums.nestEgg*100).toFixed(1):"∞"}%</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${(nums.nestEgg>0&&nums.grossNeeded*12/nums.nestEgg*100>4)?'Above':'Within'} the 4% safe rate</div>
+          <div class="sust-num-label">Avg Withdrawal Rate</div>
+          <div class="sust-num-value" style="color:${nums.avgWithdrawalRate>4?"var(--red)":"var(--green)"}">${nums.avgWithdrawalRate.toFixed(1)}%</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${nums.avgWithdrawalRate>4?'Above':'Within'} the 4% safe rate</div>
         </div>
         <div class="sust-num">
           <div class="sust-num-label">Fund Depletion</div>
@@ -3820,11 +3821,11 @@ function renderRetirement() {
         <span style="font-weight:600">${fmt(nums.totalGrossNeeded)} gross needed</span>
         ${nums.pensionIncome > 0 ? `<span>−</span><span style="color:var(--amber)">${fmt(nums.pensionIncome)} pension</span>` : ""}
         <span>=</span>
-        <span style="color:var(--amber);font-weight:600">${fmt(nums.grossNeeded)}/mo from portfolio</span>
+        <span style="color:var(--amber);font-weight:600">${fmt(nums.avgMonthlyPortfolioGross)}/mo avg from portfolio</span>
         <span>→</span>
         <span>÷ ${fmt(nums.nestEgg)} nest egg</span>
         <span>=</span>
-        <span style="color:${(nums.nestEgg>0&&nums.grossNeeded*12/nums.nestEgg*100>4)?"var(--red)":"var(--green)"};font-weight:700">${nums.nestEgg>0?(nums.grossNeeded*12/nums.nestEgg*100).toFixed(1):"∞"}% withdrawal rate</span>
+        <span style="color:${nums.avgWithdrawalRate>4?"var(--red)":"var(--green)"};font-weight:700">${nums.avgWithdrawalRate.toFixed(1)}% avg withdrawal rate</span>
       </div>
 
       ${nums.hasGapPhase ? `
