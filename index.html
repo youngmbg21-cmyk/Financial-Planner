@@ -2484,11 +2484,16 @@ function renderDashboard() {
   const realGrowth = state.growthRate - state.inflationRate;
 
   // Freedom number: total nest egg required to fund retirement expenses
+  // Uses the weighted average gross portfolio withdrawal from the runway simulation
   const retNums = getRetirementNumbers();
   const hasRetExp = sum(state.retirementExpenses||[],"amount") > 0;
-  const freedomNestEgg = hasRetExp && retNums.grossNeeded > 0
-    ? Math.round(retNums.grossNeeded * 12 / (Math.max(0.001, Math.max(0,(state.retirementPostGrowthRate||4)-state.inflationRate)/100)))
-    : Math.round(realNestEgg); // fallback: show projected nest egg if no expenses set
+  const realRate = Math.max(0.001, Math.max(0,(state.retirementPostGrowthRate||4)-state.inflationRate)/100);
+  // Compute avg annual portfolio withdrawal from runway (excludes pension, phase-weighted)
+  const rwYears = retNums.runwayData.filter((p,i) => i > 0 && p.age <= retNums.lifeExp);
+  const avgAnnualPortfolioWithdrawal = rwYears.length > 0 ? rwYears.reduce((s,p) => s + (p.annualPortfolio||0), 0) / rwYears.length : (retNums.grossNeeded * 12);
+  const freedomNestEgg = hasRetExp && avgAnnualPortfolioWithdrawal > 0
+    ? Math.round(avgAnnualPortfolioWithdrawal / realRate)
+    : Math.round(realNestEgg);
   const freedomGap = realNestEgg - freedomNestEgg;
   const freedomPct = freedomNestEgg > 0 ? Math.round(realNestEgg / freedomNestEgg * 100) : 100;
 
@@ -3575,7 +3580,6 @@ function getRetirementNumbers() {
   // Coverage: what % of total retirement spending can the portfolio + pension cover?
   // Use the weighted average monthly income across retirement years from the simulation
   // Only count years up to life expectancy, skip initial entry (projected, not actual)
-  const retYears = Math.max(1, lifeExp - state.retirementAge);
   const yearsInData = runwayData.filter((p,i) => i > 0 && p.age <= lifeExp);
   const actualYears = Math.max(1, yearsInData.length);
   const totalPortfolioDrawn = yearsInData.reduce((s,p) => s + (p.annualPortfolio || 0), 0);
@@ -3829,7 +3833,7 @@ function renderRetirement() {
         <div style="background:var(--bg-deep);border-radius:8px;padding:14px;border-left:3px solid var(--red)">
           <div style="font-size:11px;font-weight:600;color:var(--red);margin-bottom:8px;letter-spacing:.4px">PHASE 1: AGE ${state.retirementAge}–${nums.earliestPensionAge-1} (${nums.gapYears} years, no pension)</div>
           <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-muted)">Portfolio withdrawal</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:var(--amber)">${fmt(nums.prePensionBreakdown.portfolioGross)}/mo</span></div>
-          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-muted)">Pension income</span><span style="font-family:'JetBrains Mono',monospace;color:var(--text-muted)">$0</span></div>
+          <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px"><span style="color:var(--text-muted)">Pension income</span><span style="font-family:'JetBrains Mono',monospace;color:var(--text-muted)">${fmt(0)}</span></div>
           <div style="display:flex;justify-content:space-between;font-size:13px"><span style="color:var(--text-muted)">Withdrawal rate</span><span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:${nums.nestEgg>0&&nums.prePensionBreakdown.portfolioGross*12/nums.nestEgg*100>4?"var(--red)":"var(--green)"}">${nums.nestEgg>0?(nums.prePensionBreakdown.portfolioGross*12/nums.nestEgg*100).toFixed(1):"∞"}%</span></div>
         </div>
         <div style="background:var(--bg-deep);border-radius:8px;padding:14px;border-left:3px solid var(--green)">
@@ -3908,7 +3912,7 @@ function renderRetirement() {
     <!-- Longevity Runway Chart -->
     <div class="runway-card">
       <h3>Longevity Runway</h3>
-      <p class="runway-subtitle">How long your real nest egg lasts — withdrawing ${fmt(nums.grossNeeded)}/mo gross (${fmt(nums.totalToday)}/mo after ${Math.round(nums.taxRate*100)}% tax) at ${Math.max(0,(state.retirementPostGrowthRate||4)-state.inflationRate).toFixed(1)}% real growth (${state.retirementPostGrowthRate||4}% − ${state.inflationRate}% inflation).</p>
+      <p class="runway-subtitle">How long your real nest egg lasts${nums.hasGapPhase?` — Phase 1: ${fmt(nums.prePensionBreakdown.portfolioGross)}/mo (age ${state.retirementAge}–${nums.earliestPensionAge-1}), Phase 2: ${fmt(nums.postPensionBreakdown.portfolioGross)}/mo + pension (age ${nums.earliestPensionAge}+)`:` — withdrawing ${fmt(nums.grossNeeded)}/mo gross`} at ${Math.max(0,(state.retirementPostGrowthRate||4)-state.inflationRate).toFixed(1)}% real growth.</p>
       <svg viewBox="0 0 ${svgW} ${svgH}" style="width:100%;height:auto;display:block">
         <defs>
           <linearGradient id="runwayGrad" x1="0" y1="0" x2="0" y2="1">
@@ -4287,25 +4291,19 @@ ${getPensionAssets().length>0 ? `- Total Pension Income at Retirement: ${fmt(pen
 ━━ RETIREMENT EXPENSE FORECAST ━━
 ${(()=>{
   const retExp = state.retirementExpenses||[];
-  const totalToday = sum(retExp,"amount");
-  const proj = getProjectionData();
-  const realNestEgg = proj.length?proj[proj.length-1].realTotal:0;
-  const withdrawalRate = (state.retirementPostGrowthRate||4)/100;
-  const taxRate = Math.min((state.retirementTaxRate ?? 0)/100, 0.99);
-  const sustainableGross = (realNestEgg*withdrawalRate)/12;
-  const sustainableAfterTax = sustainableGross*(1-taxRate);
-  const grossNeeded = taxRate>0 ? totalToday/(1-taxRate) : totalToday;
-  const gap = sustainableAfterTax - totalToday;
-  return `- Retirement expenses (today's money): ${fmt(totalToday)}/mo (${retExp.map(e=>`${e.name}: ${fmt(e.amount)}`).join(", ")||"none set"})
-- Real nest egg at retirement (today's purchasing power): ${fmt(realNestEgg)}
-- Gross sustainable withdrawal: ${fmt(sustainableGross)}/mo at ${state.retirementPostGrowthRate||4}% rate
+  const rn = getRetirementNumbers();
+  return `- Retirement expenses (today's money): ${fmt(rn.totalExpenses)}/mo (${retExp.map(e=>`${e.name}: ${fmt(e.amount)}`).join(", ")||"none set"})
+- Real nest egg at retirement (today's purchasing power): ${fmt(rn.nestEgg)}
+- Portfolio withdrawal needed (gross): ${fmt(rn.grossNeeded)}/mo (${fmt(rn.grossNeeded*12)}/yr)
+- Pension income (gross): ${fmt(rn.pensionIncome)}/mo${rn.hasGapPhase?` (starts at age ${rn.earliestPensionAge}, ${rn.gapYears}yr gap after retirement)`:""}
+- Implied withdrawal rate: ${rn.impliedWithdrawalRate.toFixed(1)}% (${rn.impliedWithdrawalRate>4?"ABOVE":"within"} the 4% safe rate)
 - Effective retirement tax rate: ${state.retirementTaxRate ?? 0}%
-- After-tax sustainable income: ${fmt(sustainableAfterTax)}/mo
-- Gross withdrawal needed to cover expenses: ${fmt(grossNeeded)}/mo
-- Implied withdrawal rate: ${realNestEgg>0?(grossNeeded*12/realNestEgg*100).toFixed(1):"N/A"}% (${realNestEgg>0&&grossNeeded*12/realNestEgg*100>4?"ABOVE":"within"} the 4% safe rate)
-- Monthly gap (after tax): ${gap>=0?"surplus":"shortfall"} of ${fmt(Math.abs(gap))}
-- Life expectancy set to: ${state.retirementLifeExpectancy||90}
-- Retirement scenario: ${state.retirementScenario||"baseline"}`;
+- Avg after-tax income (all phases): ${fmt(rn.totalAfterTaxIncome)}/mo
+- Coverage: ${rn.coveragePct.toFixed(0)}% · ${rn.gap>=0?"surplus":"shortfall"} of ${fmt(Math.abs(rn.gap))}/mo
+- Fund depletion: ${rn.runoutAge?"age ~"+Math.round(rn.runoutAge):"never (surplus at "+rn.lifeExp+"+)"}
+- Verdict: ${rn.verdict}
+- Life expectancy set to: ${rn.lifeExp}
+- Retirement scenario: ${rn.scenario}${rn.hasGapPhase?`\n- Phase 1 (age ${state.retirementAge}-${rn.earliestPensionAge-1}): ${fmt(rn.prePensionBreakdown.portfolioGross)}/mo from portfolio, no pension\n- Phase 2 (age ${rn.earliestPensionAge}+): ${fmt(rn.postPensionBreakdown.portfolioGross)}/mo from portfolio + ${fmt(rn.postPensionBreakdown.pensionGross)}/mo pension`:""}`;
 })()}
 
 Provide concise, actionable, friendly financial advice. Use markdown formatting (bold, bullet lists) for clarity.
