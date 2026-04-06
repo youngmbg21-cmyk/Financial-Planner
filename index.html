@@ -3517,27 +3517,6 @@ function getRetirementNumbers() {
   const nestEgg = proj.length ? proj[proj.length-1].realTotal : 0;
   const nominalNestEgg = proj.length ? proj[proj.length-1].total : 0;
 
-  // Sustainable monthly in today's money (gross) — what the portfolio can sustain until life expectancy
-  // Uses annuity formula: PMT = PV × r / (1 - (1+r)^-n) where r=monthly real rate, n=months of retirement
-  const realMonthlyRate = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100 / 12;
-  const retirementMonths = Math.max(1, ((state.retirementLifeExpectancy || 90) - state.retirementAge) * 12);
-  const sustainableMonthly = realMonthlyRate > 0
-    ? nestEgg * realMonthlyRate / (1 - Math.pow(1 + realMonthlyRate, -retirementMonths))
-    : nestEgg / retirementMonths; // zero growth: simple division
-  const sustainableAfterTax = sustainableMonthly * (1 - taxRate);
-
-  // Gap: compare total after-tax income (pension + portfolio) vs total expenses
-  const totalAfterTaxIncome = pensionIncome * (1 - taxRate) + sustainableAfterTax;
-  const gap = totalAfterTaxIncome - totalExpenses;
-  const coveragePct = totalExpenses > 0 ? (totalAfterTaxIncome / totalExpenses) * 100 : 100;
-
-  // Verdict
-  let verdict, verdictIcon, verdictClass;
-  if (coveragePct >= 120) { verdict="Well Funded"; verdictIcon="✅"; verdictClass="overfunded"; }
-  else if (coveragePct >= 95) { verdict="On Track"; verdictIcon="🎯"; verdictClass="ontarget"; }
-  else if (coveragePct >= 75) { verdict="Slight Shortfall"; verdictIcon="⚠️"; verdictClass="underfunded"; }
-  else { verdict="Underfunded"; verdictIcon="❌"; verdictClass="underfunded"; }
-
   // Drawdown runway: withdraw gross amount needed to cover after-tax expenses
   // Pension income varies by age (some pensions start/stop at different ages)
   const realPostGrowth = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100 / 12;
@@ -3587,7 +3566,40 @@ function getRetirementNumbers() {
   const postPensionBreakdown = getIncomeBreakdownAtAge(earliestPensionAge);
   const gapYears = hasGapPhase ? earliestPensionAge - state.retirementAge : 0;
 
-  return { totalToday, totalExpenses, totalGrossNeeded, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, totalAfterTaxIncome, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate, hasGapPhase, prePensionBreakdown, postPensionBreakdown, gapYears, earliestPensionAge };
+  // ── Sustainability verdict — derived from the ACTUAL runway simulation ──
+  // The runway is the source of truth because it handles multi-phase income correctly.
+  // Find balance at life expectancy from runway data
+  const balanceAtLifeExp = runwayData.find(p => p.age >= lifeExp)?.balance ?? (runwayData.length > 0 ? runwayData[runwayData.length-1].balance : 0);
+  const fundSurvives = !runoutAge || runoutAge > lifeExp;
+
+  // Coverage: what % of total retirement spending can the portfolio + pension cover?
+  // Use the weighted average monthly income across all retirement years from the simulation
+  const totalRetMonths = Math.max(1, (lifeExp - state.retirementAge) * 12);
+  const totalPortfolioDrawn = runwayData.reduce((s,p) => s + (p.annualPortfolio || 0), 0);
+  const totalPensionDrawn = runwayData.reduce((s,p) => s + (p.annualPension || 0), 0);
+  const avgMonthlyGrossIncome = (totalPortfolioDrawn + totalPensionDrawn) / totalRetMonths;
+  const avgMonthlyAfterTax = avgMonthlyGrossIncome * (1 - taxRate);
+  const totalAfterTaxIncome = avgMonthlyAfterTax;
+  const gap = totalAfterTaxIncome - totalExpenses;
+  const coveragePct = totalExpenses > 0 ? (totalAfterTaxIncome / totalExpenses) * 100 : 100;
+
+  // Verdict based on fund survival and coverage
+  let verdict, verdictIcon, verdictClass;
+  if (fundSurvives && coveragePct >= 95) { verdict="Well Funded"; verdictIcon="✅"; verdictClass="overfunded"; }
+  else if (fundSurvives && coveragePct >= 80) { verdict="On Track"; verdictIcon="🎯"; verdictClass="ontarget"; }
+  else if (fundSurvives) { verdict="Tight but Viable"; verdictIcon="⚠️"; verdictClass="ontarget"; }
+  else if (runoutAge && runoutAge >= lifeExp - 5) { verdict="Slight Shortfall"; verdictIcon="⚠️"; verdictClass="underfunded"; }
+  else { verdict="Underfunded"; verdictIcon="❌"; verdictClass="underfunded"; }
+
+  // Sustainable monthly: what the portfolio alone can provide (for display)
+  const realMonthlyRate = Math.max(0, (state.retirementPostGrowthRate || 4) - state.inflationRate) / 100 / 12;
+  const retirementMonths = Math.max(1, (lifeExp - state.retirementAge) * 12);
+  const sustainableMonthly = realMonthlyRate > 0
+    ? nestEgg * realMonthlyRate / (1 - Math.pow(1 + realMonthlyRate, -retirementMonths))
+    : nestEgg / retirementMonths;
+  const sustainableAfterTax = sustainableMonthly * (1 - taxRate);
+
+  return { totalToday, totalExpenses, totalGrossNeeded, pensionIncome, grossNeeded, nestEgg, nominalNestEgg, sustainableMonthly, sustainableAfterTax, totalAfterTaxIncome, gap, coveragePct, verdict, verdictIcon, verdictClass, ytr, runwayData, runoutAge, scenario, lifeExp, taxRate, impliedWithdrawalRate, hasGapPhase, prePensionBreakdown, postPensionBreakdown, gapYears, earliestPensionAge, fundSurvives, balanceAtLifeExp };
 }
 
 function renderRetirement() {
@@ -3838,29 +3850,25 @@ function renderRetirement() {
             <div class="sust-verdict-text ${nums.verdictClass}">${nums.verdict}</div>
           </div>
         </div>
-        <div style="font-size:13px;color:var(--text-muted);max-width:380px;line-height:1.6">
-          Your total after-tax income (pension + portfolio) is
-          <strong style="color:var(--green)">${fmt(nums.totalAfterTaxIncome)}/mo</strong>.
-          You need <strong style="color:var(--text-primary)">${fmt(nums.totalExpenses)}/mo</strong> in expenses.
-          ${nums.pensionIncome>0?`Pension covers <strong style="color:var(--amber)">${fmt(nums.pensionIncome)}/mo gross</strong>; portfolio provides <strong style="color:var(--green)">${fmt(nums.sustainableMonthly)}/mo gross</strong>.`:`Portfolio sustains <strong style="color:var(--green)">${fmt(nums.sustainableMonthly)}/mo gross</strong> (${fmt(nums.sustainableAfterTax)}/mo after ${Math.round(nums.taxRate*100)}% tax).`}
+        <div style="font-size:13px;color:var(--text-muted);max-width:420px;line-height:1.6">
+          ${nums.fundSurvives
+            ? `Your portfolio <strong style="color:var(--green)">survives to age ${nums.lifeExp}+</strong> with <strong style="color:var(--green)">${fmt(nums.balanceAtLifeExp)}</strong> remaining.
+               ${nums.hasGapPhase ? `The ${nums.gapYears}-year pre-pension gap (age ${state.retirementAge}–${nums.earliestPensionAge-1}) is absorbed by higher initial withdrawals, then pension income reduces the draw from age ${nums.earliestPensionAge}.` : ""}`
+            : `Your portfolio <strong style="color:var(--red)">depletes at age ~${Math.round(nums.runoutAge)}</strong>, ${Math.round(nums.lifeExp - nums.runoutAge)} years before life expectancy.`}
+          Avg after-tax income across all phases: <strong style="color:var(--green)">${fmt(nums.totalAfterTaxIncome)}/mo</strong> vs <strong>${fmt(nums.totalExpenses)}/mo</strong> needed.
         </div>
       </div>
 
       <div class="sust-numbers">
-        ${nums.pensionIncome > 0 ? `<div class="sust-num">
-          <div class="sust-num-label">Pension Income (Gross)</div>
-          <div class="sust-num-value" style="color:var(--amber)">${fmt(nums.pensionIncome)}/mo</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.pensionIncome*12)}/yr</div>
-        </div>` : ""}
         <div class="sust-num">
-          <div class="sust-num-label">Portfolio Can Sustain (Gross)</div>
-          <div class="sust-num-value" style="color:var(--blue)">${fmt(nums.sustainableMonthly)}/mo</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.sustainableMonthly*12)}/yr</div>
+          <div class="sust-num-label">Fund Survives To</div>
+          <div class="sust-num-value" style="color:${nums.fundSurvives?"var(--green)":"var(--red)"}">${nums.runoutAge?"Age "+Math.round(nums.runoutAge):"Age "+nums.lifeExp+"+"}</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${nums.fundSurvives?`${fmt(nums.balanceAtLifeExp)} remaining`:`Depletes ${Math.round(nums.lifeExp-nums.runoutAge)}yrs early`}</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">Total After-Tax Income</div>
+          <div class="sust-num-label">Avg After-Tax Income</div>
           <div class="sust-num-value" style="color:var(--green)">${fmt(nums.totalAfterTaxIncome)}/mo</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalAfterTaxIncome*12)}/yr after ${Math.round(nums.taxRate*100)}% tax</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">Weighted across all phases</div>
         </div>
         <div class="sust-num">
           <div class="sust-num-label">You Need (After Tax)</div>
@@ -3868,9 +3876,9 @@ function renderRetirement() {
           <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${fmt(nums.totalExpenses*12)}/yr expenses</div>
         </div>
         <div class="sust-num">
-          <div class="sust-num-label">Monthly Gap (After Tax)</div>
-          <div class="sust-num-value" style="color:${nums.gap>=0?"var(--green)":"var(--red)"}">${nums.gap>=0?"+":""}${fmt(nums.gap)}</div>
-          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${nums.gap>=0?"Buffer":"Shortfall"} of ${fmt(Math.abs(nums.gap)*12)}/yr</div>
+          <div class="sust-num-label">Coverage</div>
+          <div class="sust-num-value" style="color:${nums.coveragePct>=95?"var(--green)":nums.coveragePct>=75?"var(--amber)":"var(--red)"}">${nums.coveragePct.toFixed(0)}%</div>
+          <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${nums.gap>=0?`+${fmt(nums.gap)}/mo surplus`:`${fmt(Math.abs(nums.gap))}/mo avg shortfall`}</div>
         </div>
       </div>
 
